@@ -1,0 +1,27 @@
+services:
+  # Banco de desenvolvimento (npm run dev).
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sobro
+      POSTGRES_PASSWORD: sobro
+      POSTGRES_DB: sobro
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # Banco dos testes de integração (npm test). Em memória: some quando o contêiner para.
+  db-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sobro
+      POSTGRES_PASSWORD: sobro
+      POSTGRES_DB: sobro_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+
+volumes:
+  pgdata:
