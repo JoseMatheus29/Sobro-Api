@@ -4,6 +4,7 @@ import type { createBackupController } from '../controllers/backup.controller.js
 import type { createBudgetsController } from '../controllers/budgets.controller.js';
 import type { createCardsController } from '../controllers/cards.controller.js';
 import type { createCategoriesController } from '../controllers/categories.controller.js';
+import type { createGoalsController } from '../controllers/goals.controller.js';
 import type { createRecurrencesController } from '../controllers/recurrences.controller.js';
 import type { createReportsController } from '../controllers/reports.controller.js';
 import type { createTransactionsController } from '../controllers/transactions.controller.js';
@@ -30,6 +31,17 @@ export function transactionsRoutes(app: FastifyInstance, c: Controller<typeof cr
   app.patch('/transactions/:id', c.update);
   app.delete('/transactions/:id', c.remove);
   app.post('/transfers', c.transfer);
+}
+
+export function goalsRoutes(app: FastifyInstance, c: Controller<typeof createGoalsController>) {
+  app.get('/goals', c.list);
+  app.post('/goals', c.create);
+  app.get('/goals/:id', c.get);
+  app.patch('/goals/:id', c.update);
+  app.delete('/goals/:id', c.remove);
+  app.get('/goals/:id/entries', c.listGoalEntries);
+  app.post('/goals/:id/entries', c.createEntry);
+  app.delete('/goals/:id/entries/:entryId', c.removeEntry);
 }
 
 export function recurrencesRoutes(app: FastifyInstance, c: Controller<typeof createRecurrencesController>) {

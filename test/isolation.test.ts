@@ -8,6 +8,8 @@ let bob: Client;
 let aliceCard: number;
 let aliceTx: number;
 let aliceRecurrence: number;
+let aliceGoal: number;
+let aliceEntry: number;
 
 beforeAll(async () => {
   t = await makeApp({ now: () => new Date('2026-10-10T15:00:00.000Z') });
@@ -27,6 +29,8 @@ beforeAll(async () => {
   ).body.id;
   aliceRecurrence = (await alice.get('/recurrences')).body[0].id;
   await alice.put('/budgets/monthly/2026-10', { amount: 1000 });
+  aliceGoal = (await alice.post('/goals', { name: 'Viagem da Alice', targetAmount: 900, targetMonth: null, color: '#3161B2', icon: 'flight' })).body.id;
+  aliceEntry = (await alice.post(`/goals/${aliceGoal}/entries`, { amount: 250 })).body.id;
 });
 afterAll(() => t.close());
 
@@ -63,6 +67,28 @@ describe('um usuário não alcança os dados de outro', () => {
     const cards = (await bob.get('/cards')).body;
     expect(cards).toHaveLength(1);
     expect(cards[0].id).not.toBe(aliceCard);
+  });
+
+  it('caixinhas e movimentações', async () => {
+    expect((await bob.get(`/goals/${aliceGoal}`)).status).toBe(404);
+    expect((await bob.patch(`/goals/${aliceGoal}`, { name: 'Invadida' })).status).toBe(404);
+    expect((await bob.del(`/goals/${aliceGoal}`)).status).toBe(404);
+    expect((await bob.get(`/goals/${aliceGoal}/entries`)).status).toBe(404);
+    expect((await bob.post(`/goals/${aliceGoal}/entries`, { amount: 10 })).status).toBe(404);
+    expect((await bob.post(`/goals/${aliceGoal}/entries`, { amount: -10 })).status).toBe(404);
+    expect((await bob.del(`/goals/${aliceGoal}/entries/${aliceEntry}`)).status).toBe(404);
+
+    // Nada mudou para a Alice, e a listagem do Bob não traz a caixinha dela.
+    expect((await alice.get(`/goals/${aliceGoal}`)).body).toMatchObject({ name: 'Viagem da Alice', saved: 250 });
+    expect((await alice.get(`/goals/${aliceGoal}/entries`)).body).toHaveLength(1);
+    expect((await bob.get('/goals')).body).toEqual([]);
+  });
+
+  it('o Bob não apaga a movimentação da Alice pela caixinha dele', async () => {
+    const bobGoal = (await bob.post('/goals', { name: 'Do Bob', targetAmount: 100, color: '#000000', icon: 'savings' })).body.id;
+    expect((await bob.del(`/goals/${bobGoal}/entries/${aliceEntry}`)).status).toBe(404);
+    expect((await alice.get(`/goals/${aliceGoal}`)).body.saved).toBe(250);
+    expect((await bob.del(`/goals/${bobGoal}`)).status).toBe(204);
   });
 
   it('não lança em conta alheia nem transfere de/para ela', async () => {

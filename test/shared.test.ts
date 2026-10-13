@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { maskUrl } from '../src/lib/logging.js';
 import { compareVersions } from '../src/lib/version.js';
+import { movementProblem } from '../src/shared/goals.js';
 import { addMonths, calendarNoon, monthKey, monthRange } from '../src/shared/month.js';
 import { dueOccurrences, lastMonthOf, occurrenceDate, occurrenceIn, type RecurrenceRule } from '../src/shared/recurrence.js';
 import { escapeLike, foldText, searchWords } from '../src/shared/search.js';
@@ -112,5 +113,25 @@ describe('máscara de logs', () => {
   it('esconde o termo buscado e tokens da URL', () => {
     expect(maskUrl('/v1/transactions?month=2026-10&q=remedio')).toBe('/v1/transactions?month=2026-10&q=%5Bredacted%5D');
     expect(maskUrl('/v1/cards')).toBe('/v1/cards');
+  });
+});
+
+describe('movementProblem (caixinhas)', () => {
+  it('aceita um valor positivo', () => {
+    expect(movementProblem('deposit', 50, 0)).toBeNull();
+    expect(movementProblem('withdraw', 50, 50)).toBeNull();
+  });
+
+  it('recusa zero, negativo e não numérico', () => {
+    expect(movementProblem('deposit', 0, 0)).toBe('invalid');
+    expect(movementProblem('deposit', -10, 0)).toBe('invalid');
+    expect(movementProblem('withdraw', Number.NaN, 100)).toBe('invalid');
+  });
+
+  it('só deixa sair o que está dentro, comparando em centavos', () => {
+    expect(movementProblem('withdraw', 80.01, 80)).toBe('exceeds');
+    expect(movementProblem('deposit', 80.01, 80)).toBeNull();
+    // 0.1 + 0.2 em ponto flutuante passa de 0.3: os centavos corrigem.
+    expect(movementProblem('withdraw', 0.1 + 0.2, 0.3)).toBeNull();
   });
 });
