@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { makeApp, noon, signup, type Client, type TestApp } from './helpers.js';
@@ -91,7 +92,10 @@ describe('backup', () => {
     await me.post('/transfers', { fromCardId: a, toCardId: b.id, amount: 25, occurredAt: noon('2026-10-06') });
     await me.put('/budgets/monthly/2026-10', { amount: 3000 });
     await me.put('/budgets/categories/food/2026-10', { amount: 500 });
-    return { a, b };
+    const goal = (await me.post('/goals', { name: 'Viagem', targetAmount: 1000, targetMonth: '2027-06', color: '#3161B2', icon: 'flight' })).body;
+    await me.post(`/goals/${goal.id}/entries`, { amount: 300, occurredAt: '2026-10-02T14:30:00.000Z' });
+    await me.post(`/goals/${goal.id}/entries`, { amount: -50, occurredAt: '2026-10-04T09:15:00.000Z' });
+    return { a, b, goal };
   }
 
   it('exporta no formato do app e o importa de volta refazendo os ids, com o mesmo resultado', async () => {
@@ -99,11 +103,20 @@ describe('backup', () => {
     await populate(me);
     const exported = (await me.get('/backup')).body;
 
-    expect(exported).toMatchObject({ app: 'sobro', format: 1, schemaVersion: 6 });
+    expect(exported).toMatchObject({ app: 'sobro', format: 1, schemaVersion: 8 });
     expect(Object.keys(exported.data).sort()).toEqual(
-      ['cards', 'categories', 'category_budgets', 'monthly_budgets', 'profile', 'recurrences', 'transactions']
+      ['cards', 'categories', 'category_budgets', 'goal_entries', 'goals', 'monthly_budgets', 'profile', 'recurrences', 'transactions']
     );
-    expect(exported.data.profile).toEqual([{ id: 1, name: 'Ana', currency: 'BRL', avatar_uri: null, monthly_budget: null, reminders_enabled: 0 }]);
+    expect(exported.data.profile).toEqual([
+      { id: 1, name: 'Ana', currency: 'BRL', avatar_uri: null, monthly_budget: null, reminders_enabled: 0, theme: 'system' },
+    ]);
+    expect(exported.data.goals).toEqual([
+      { id: expect.any(Number), name: 'Viagem', target_amount: 1000, target_month: '2027-06', color: '#3161B2', icon: 'flight' },
+    ]);
+    expect(exported.data.goal_entries.map((e: { amount: number; occurred_at: string }) => [e.amount, e.occurred_at])).toEqual([
+      [300, '2026-10-02T14:30:00.000Z'],
+      [-50, '2026-10-04T09:15:00.000Z'],
+    ]);
     const legs = exported.data.transactions.filter((x: { transfer_id: number | null }) => x.transfer_id !== null);
     expect(legs).toHaveLength(2);
 
@@ -111,6 +124,7 @@ describe('backup', () => {
       cards: (await me.get('/cards')).body.map((c: { name: string; balance: number }) => [c.name, c.balance]),
       totals: (await me.get('/reports/monthly-totals')).body,
       count: (await me.get('/transactions?limit=100')).body.items.length,
+      goals: (await me.get('/goals')).body.map((g: { name: string; saved: number }) => [g.name, g.saved]),
     };
 
     expect((await me.put('/backup', exported)).status).toBe(204);
@@ -129,6 +143,16 @@ describe('backup', () => {
     expect(transferLegs[0].transferId).toBe(transferLegs[1].transferId);
     expect(transferLegs.map((x: { id: number }) => x.id)).toContain(transferLegs[0].transferId);
     expect(cardsAfter.every((c: { id: number }) => !exported.data.cards.some((o: { id: number }) => o.id === c.id))).toBe(true);
+    // A caixinha volta com o mesmo valor guardado, ids novos e o histórico nos mesmos instantes.
+    const goalsAfter = (await me.get('/goals')).body;
+    expect(goalsAfter.map((g: { name: string; saved: number }) => [g.name, g.saved])).toEqual(before.goals);
+    expect(goalsAfter[0].id).not.toBe(exported.data.goals[0].id);
+    const history = (await me.get(`/goals/${goalsAfter[0].id}/entries`)).body;
+    expect(history.map((e: { amount: number; occurredAt: string }) => [e.amount, e.occurredAt])).toEqual([
+      [-50, '2026-10-04T09:15:00.000Z'],
+      [300, '2026-10-02T14:30:00.000Z'],
+    ]);
+    expect((await me.get('/me')).body).not.toHaveProperty('theme');
     // A recorrência veio junto e aponta para a conta nova.
     const rec = (await me.get('/recurrences')).body;
     expect(rec).toHaveLength(1);
@@ -173,7 +197,19 @@ describe('backup', () => {
     expect(cards).toHaveLength(1);
     expect(cards[0].name).toBe('Conta Principal');
     expect((await me.get('/transactions')).body.items).toEqual([]);
+    expect((await me.get('/goals')).body).toEqual([]);
   });
+
+  const goal = (id: number, extra: Record<string, unknown> = {}) => ({
+    id,
+    name: 'Meta',
+    target_amount: 100,
+    target_month: null,
+    color: '#3161B2',
+    icon: 'savings',
+    ...extra,
+  });
+  const goalEntry = (id: number, goalId: number, amount: number) => ({ id, goal_id: goalId, amount, occurred_at: '2026-10-05T14:00:00.000Z' });
 
   const valid = () => ({
     app: 'sobro',
@@ -188,7 +224,7 @@ describe('backup', () => {
   it.each([
     ['não é do Sobrô', (b: any) => (b.app = 'outro')],
     ['formato mais novo', (b: any) => (b.format = 2)],
-    ['esquema mais novo', (b: any) => (b.schemaVersion = 7)],
+    ['esquema mais novo', (b: any) => (b.schemaVersion = 9)],
     ['conta que não existe', (b: any) => (b.data.transactions[0].card_id = 99)],
     ['categoria que não existe', (b: any) => (b.data.transactions[0].category_id = 'nada')],
     ['tipo inválido', (b: any) => (b.data.transactions[0].type = 'x')],
@@ -201,6 +237,14 @@ describe('backup', () => {
     ['recorrência com dia 40', (b: any) => (b.data.recurrences = [{ id: 1, card_id: 1, category_id: 'food', name: 'r', amount: 5, day: 40, start_month: '2026-10', generated_until: '2026-10' }])],
     ['orçamento com mês inválido', (b: any) => (b.data.monthly_budgets = [{ month: 'out', amount: 1 }])],
     ['orçamento repetido', (b: any) => (b.data.monthly_budgets = [{ month: '2026-10', amount: 1 }, { month: '2026-10', amount: 2 }])],
+    ['caixinha com id repetido', (b: any) => (b.data.goals = [goal(1), goal(1)])],
+    ['movimentação apontando para caixinha inexistente', (b: any) => ((b.data.goals = [goal(1)]), (b.data.goal_entries = [goalEntry(1, 99, 10)]))],
+    ['meta de caixinha com valor zero', (b: any) => (b.data.goals = [goal(1, { target_amount: 0 })])],
+    ['prazo de caixinha inválido', (b: any) => (b.data.goals = [goal(1, { target_month: 'out/2026' })])],
+    ['caixinha cujas movimentações somam menos que zero', (b: any) => ((b.data.goals = [goal(1)]), (b.data.goal_entries = [goalEntry(1, 1, 10), goalEntry(2, 1, -20)]))],
+    ['movimentação de caixinha com valor zero', (b: any) => ((b.data.goals = [goal(1)]), (b.data.goal_entries = [goalEntry(1, 1, 0)]))],
+    ['movimentação de caixinha com data inválida', (b: any) => ((b.data.goals = [goal(1)]), (b.data.goal_entries = [{ ...goalEntry(1, 1, 10), occurred_at: 'ontem' }]))],
+    ['caixinha sem nome', (b: any) => ((b.data.goals = [goal(1)]), delete b.data.goals[0].name)],
   ])('recusa um backup com %s e não muda nada', async (_name, break_) => {
     const me = await signup(t.app);
     const a = await card(me);
@@ -218,5 +262,127 @@ describe('backup', () => {
     const me = await signup(t.app);
     expect((await me.put('/backup', [])).status).toBe(400);
     expect((await me.put('/backup', { app: 'sobro' })).status).toBe(400);
+  });
+
+  describe('arquivos de qualquer versão do app', () => {
+    const at = (schemaVersion: number, data: Record<string, unknown>) => ({ app: 'sobro', format: 1, schemaVersion, exportedAt: '2026-10-09T10:00:00.000Z', data });
+    const baseCards = [{ id: 1, name: 'Carteira', number: '0001', color: '#3161B2', light_color: '#4A74BB', balance: 0 }];
+    const expense = (id: number, extra: Record<string, unknown> = {}) => ({
+      id, card_id: 1, category_id: 'food', name: `gasto ${id}`, amount: -10, type: 'expense', occurred_at: '2026-10-05T12:00:00.000Z', ...extra,
+    });
+
+    const files: [string, number, () => unknown][] = [
+      ['v1', 1, () => at(1, { cards: baseCards, transactions: [expense(1)], profile: [{ id: 1, name: 'Zé', currency: 'BRL', avatar_uri: null, monthly_budget: 800 }] })],
+      [
+        'v4',
+        4,
+        () =>
+          at(4, {
+            cards: baseCards,
+            recurrences: [{ id: 1, card_id: 1, category_id: 'leisure', name: 'Streaming', amount: 30, day: 5, start_month: '2026-09', generated_until: '2026-10' }],
+            transactions: [expense(1), expense(2, { recurrence_id: 1, category_id: 'leisure' })],
+            monthly_budgets: [{ month: '0000-00', amount: 1500 }],
+            profile: [{ id: 1, name: 'Zé', currency: 'BRL', avatar_uri: null, monthly_budget: null }],
+          }),
+      ],
+      [
+        'v6',
+        6,
+        () =>
+          at(6, {
+            cards: [...baseCards, { id: 2, name: 'Poupança', number: '2', color: '#277F2B', light_color: '#3FA145', balance: 100 }],
+            transactions: [
+              expense(1),
+              expense(2, { category_id: 'transfer', name: 'Para Poupança', amount: -40, transfer_id: 2 }),
+              { ...expense(3, { category_id: 'transfer', name: 'De Carteira', amount: 40, type: 'income', transfer_id: 2 }), card_id: 2 },
+            ],
+            category_budgets: [{ category_id: 'food', month: '2026-10', amount: 300 }],
+            profile: [{ id: 1, name: 'Zé', currency: 'BRL', avatar_uri: null, monthly_budget: null, reminders_enabled: 0 }],
+          }),
+      ],
+      [
+        'v8',
+        8,
+        () =>
+          at(8, {
+            cards: baseCards,
+            transactions: [expense(1)],
+            profile: [{ id: 1, name: 'Zé', currency: 'BRL', avatar_uri: null, monthly_budget: null, reminders_enabled: 1, theme: 'dark' }],
+            goals: [goal(1, { name: 'Viagem', target_amount: 500, target_month: '2027-01' })],
+            goal_entries: [goalEntry(1, 1, 200), goalEntry(2, 1, -50)],
+          }),
+      ],
+    ];
+
+    it.each(files)('aceita um arquivo %s e o que se exporta depois entra de novo', async (_name, version, build) => {
+      const me = await signup(t.app);
+      await populate(me); // tem caixinha: o arquivo substitui tudo, e um arquivo antigo não traz caixinhas
+
+      expect((await me.put('/backup', build())).status).toBe(204);
+      expect((await me.get('/me')).body.name).toBe('Zé');
+      expect((await me.get('/me')).body).not.toHaveProperty('theme');
+
+      const goalsNow = (await me.get('/goals')).body;
+      expect(goalsNow.map((g: { name: string; saved: number }) => [g.name, g.saved])).toEqual(version === 8 ? [['Viagem', 150]] : []);
+
+      // O que a API exporta entra de volta sem reclamar, em qualquer versão de origem.
+      const exported = (await me.get('/backup')).body;
+      expect(exported.schemaVersion).toBe(8);
+      expect((await me.put('/backup', exported)).status).toBe(204);
+      expect((await me.get('/goals')).body.map((g: { saved: number }) => g.saved)).toEqual(goalsNow.map((g: { saved: number }) => g.saved));
+    });
+
+    it('o tema do arquivo do app é aceito e descartado', async () => {
+      const me = await signup(t.app);
+      const v8 = files[3]![2]() as { data: { profile: { theme: string }[] } };
+      expect(v8.data.profile[0]!.theme).toBe('dark');
+      expect((await me.put('/backup', v8)).status).toBe(204);
+      expect((await me.get('/me')).body).toEqual({ id: me.userId, email: me.email, name: 'Zé', currency: 'BRL', remindersEnabled: true });
+      // O backup exportado volta com o tema neutro, nunca o 'dark' do arquivo.
+      expect((await me.get('/backup')).body.data.profile[0].theme).toBe('system');
+    });
+  });
+
+  describe('arquivo exportado pelo app v8 (fixture)', () => {
+    type BackupFileLike = { data: Record<string, Record<string, unknown>[]> };
+    const fixture = JSON.parse(readFileSync(new URL('./fixtures/app-backup-v8.json', import.meta.url), 'utf8')) as BackupFileLike;
+
+    // O conteúdo sem os ids: referências viram nomes, para comparar arquivos de ids diferentes.
+    function canonical(file: BackupFileLike) {
+      const d = file.data;
+      const cardName = (id: unknown) => d.cards!.find((c) => c.id === id)!.name;
+      const goalName = (id: unknown) => d.goals!.find((g) => g.id === id)!.name;
+      const sorted = (rows: unknown[][]) => rows.map((r) => JSON.stringify(r)).sort();
+      return {
+        cards: sorted(d.cards!.map((c) => [c.name, c.number, c.balance])),
+        transactions: sorted(
+          d.transactions!.map((x) => [cardName(x.card_id), x.category_id, x.name, x.amount, x.type, x.occurred_at, x.recurrence_id !== null, x.transfer_id !== null])
+        ),
+        recurrences: sorted(d.recurrences!.map((r) => [cardName(r.card_id), r.name, r.amount, r.day, r.generated_until])),
+        monthly_budgets: sorted(d.monthly_budgets!.map((b) => [b.month, b.amount])),
+        category_budgets: sorted(d.category_budgets!.map((b) => [b.category_id, b.month, b.amount])),
+        goals: sorted(d.goals!.map((g) => [g.name, g.target_amount, g.target_month, g.color, g.icon])),
+        goal_entries: sorted(d.goal_entries!.map((e) => [goalName(e.goal_id), e.amount, e.occurred_at])),
+      };
+    }
+
+    it('entra com PUT /backup e GET /backup devolve o mesmo conteúdo, com ids refeitos e o mesmo valor nas caixinhas', async () => {
+      const me = await signup(t.app);
+      expect((await me.put('/backup', fixture)).status).toBe(204);
+
+      const exported = (await me.get('/backup')).body as BackupFileLike;
+      expect(canonical(exported)).toEqual(canonical(fixture));
+
+      // Os ids foram refeitos.
+      const oldCardIds = fixture.data.cards!.map((c) => c.id);
+      expect(exported.data.cards!.some((c) => oldCardIds.includes(c.id))).toBe(false);
+
+      const goals = (await me.get('/goals')).body;
+      expect(goals.map((g: { name: string; saved: number }) => [g.name, g.saved])).toEqual([['Viagem', 1000], ['Reserva', 300]]);
+      // As caixinhas não mexem nas contas: o saldo da principal vem só das transações do arquivo.
+      const cards = (await me.get('/cards')).body;
+      expect(cards.map((c: { name: string; balance: number }) => [c.name, c.balance])).toEqual([['Conta Principal', 2892.85], ['Poupança', 1800]]);
+      expect((await me.get('/me')).body).toMatchObject({ name: 'Pessoa de Teste' });
+    });
   });
 });

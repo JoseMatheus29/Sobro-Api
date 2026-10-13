@@ -5,6 +5,8 @@ import {
   cards,
   categories,
   categoryBudgets,
+  goalEntries,
+  goals,
   monthlyBudgets,
   profile,
   recurrences,
@@ -36,6 +38,8 @@ export async function exportBackup(db: Db, userId: string, now = new Date()): Pr
     const profileRow = await tx.select().from(profile).where(eq(profile.userId, userId));
     const monthly = await tx.select().from(monthlyBudgets).where(eq(monthlyBudgets.userId, userId)).orderBy(asc(monthlyBudgets.month));
     const perCategory = await tx.select().from(categoryBudgets).where(eq(categoryBudgets.userId, userId)).orderBy(asc(categoryBudgets.month));
+    const goalRows = await tx.select().from(goals).where(eq(goals.userId, userId)).orderBy(asc(goals.id));
+    const goalEntryRows = await tx.select().from(goalEntries).where(eq(goalEntries.userId, userId)).orderBy(asc(goalEntries.id));
 
     const me = profileRow[0];
     return {
@@ -89,10 +93,26 @@ export async function exportBackup(db: Db, userId: string, now = new Date()): Pr
             avatar_uri: null,
             monthly_budget: null,
             reminders_enabled: me?.remindersEnabled === false ? 0 : 1,
+            // O tema fica só no app; o campo existe para o arquivo ter o formato do app (que o trata como opcional).
+            theme: 'system',
           },
         ],
         monthly_budgets: monthly.map((b): BackupRow => ({ month: b.month, amount: b.amount })),
         category_budgets: perCategory.map((b): BackupRow => ({ category_id: b.categoryId, month: b.month, amount: b.amount })),
+        goals: goalRows.map((g): BackupRow => ({
+          id: g.id,
+          name: g.name,
+          target_amount: g.targetAmount,
+          target_month: g.targetMonth,
+          color: g.color,
+          icon: g.icon,
+        })),
+        goal_entries: goalEntryRows.map((e): BackupRow => ({
+          id: e.id,
+          goal_id: e.goalId,
+          amount: e.amount,
+          occurred_at: e.occurredAt.toISOString(),
+        })),
       },
     };
   }, { isolationLevel: 'repeatable read', accessMode: 'read only' });
@@ -114,6 +134,8 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
   const { data } = backup;
 
   // O que aponta para os outros sai primeiro. O perfil e as categorias ficam.
+  await tx.delete(goalEntries).where(eq(goalEntries.userId, userId));
+  await tx.delete(goals).where(eq(goals.userId, userId));
   await tx.delete(transactions).where(eq(transactions.userId, userId));
   await tx.delete(recurrences).where(eq(recurrences.userId, userId));
   await tx.delete(categoryBudgets).where(eq(categoryBudgets.userId, userId));
@@ -211,6 +233,34 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
       .update(transactions)
       .set({ transferId: transactionIds.get(row.transfer_id as number)! })
       .where(eq(transactions.id, transactionIds.get(row.id as number)!));
+  }
+
+  // Caixinhas: os ids são refeitos e as movimentações passam a apontar para o id novo. As datas ficam como
+  // vieram (instante), sem normalizar: o histórico é ordenado por elas e não entra em total de mês.
+  const goalIds = new Map<number, number>();
+  for (const row of data.goals) {
+    const [created] = await tx
+      .insert(goals)
+      .values({
+        userId,
+        name: String(row.name),
+        targetAmount: round2(Number(row.target_amount)),
+        targetMonth: (row.target_month as string | null) ?? null,
+        color: String(row.color),
+        icon: String(row.icon),
+      })
+      .returning({ id: goals.id });
+    goalIds.set(row.id as number, created!.id);
+  }
+  for (const batch of chunks(data.goal_entries)) {
+    await tx.insert(goalEntries).values(
+      batch.map((row) => ({
+        userId,
+        goalId: goalIds.get(row.goal_id as number)!,
+        amount: round2(Number(row.amount)),
+        occurredAt: new Date(String(row.occurred_at)),
+      }))
+    );
   }
 
   for (const batch of chunks(data.monthly_budgets)) {

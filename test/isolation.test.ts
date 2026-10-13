@@ -122,9 +122,13 @@ describe('um usuário não alcança os dados de outro', () => {
   it('o backup de um não traz nem substitui os dados do outro', async () => {
     const bobBackup = (await bob.get('/backup')).body;
     expect(JSON.stringify(bobBackup)).not.toContain('Segredo da Alice');
+    expect(JSON.stringify(bobBackup)).not.toContain('Viagem da Alice');
+    expect(bobBackup.data.goal_entries).toEqual([]);
 
     expect((await bob.put('/backup', bobBackup)).status).toBe(204);
     expect((await alice.get(`/transactions/${aliceTx}`)).status).toBe(200);
+    // Restaurar o backup do Bob (sem caixinhas) não apaga a caixinha da Alice.
+    expect((await alice.get(`/goals/${aliceGoal}`)).body.saved).toBe(250);
   });
 
   it('a Alice continua com tudo', async () => {

@@ -8,7 +8,9 @@ export type BackupTableName =
   | 'transactions'
   | 'profile'
   | 'monthly_budgets'
-  | 'category_budgets';
+  | 'category_budgets'
+  | 'goals'
+  | 'goal_entries';
 
 export type BackupValue = string | number | null;
 export type BackupRow = Record<string, BackupValue>;
@@ -46,8 +48,8 @@ export type BackupValidation = { ok: true; backup: ValidBackup } | { ok: false; 
 
 export const BACKUP_APP = 'sobro';
 export const BACKUP_FORMAT = 1;
-/** A versão do esquema do app (migração v6) que esta API entende. */
-export const BACKUP_SCHEMA_VERSION = 6;
+/** A versão do esquema do app (migração v8) que esta API entende. */
+export const BACKUP_SCHEMA_VERSION = 8;
 
 const text = (name: string, extra: Partial<ColumnSpec> = {}): ColumnSpec => ({ name, kind: 'text', required: true, ...extra });
 const number = (name: string, extra: Partial<ColumnSpec> = {}): ColumnSpec => ({ name, kind: 'number', required: true, ...extra });
@@ -107,6 +109,18 @@ export const BACKUP_TABLES: TableSpec[] = [
   },
   { name: 'monthly_budgets', columns: [text('month'), number('amount', { nullable: true })] },
   { name: 'category_budgets', columns: [text('category_id'), text('month'), number('amount', { nullable: true })] },
+  {
+    name: 'goals',
+    columns: [
+      integer('id'),
+      text('name'),
+      number('target_amount'),
+      text('target_month', { required: false, nullable: true, fallback: null }),
+      text('color'),
+      text('icon'),
+    ],
+  },
+  { name: 'goal_entries', columns: [integer('id'), integer('goal_id'), number('amount'), text('occurred_at')] },
 ];
 
 export const BACKUP_REASONS = {
@@ -123,6 +137,9 @@ export const BACKUP_REASONS = {
   badMonth: (table: string, index: number) => `Linha ${index + 1} de "${table}": o mês precisa estar no formato AAAA-MM.`,
   badTransfer: (index: number) => `Transação ${index + 1}: a transferência não tem as duas pernas no backup.`,
   duplicateId: (table: string) => `"${table}" tem ids repetidos.`,
+  badGoal: (index: number) => `Caixinha ${index + 1}: o valor da meta precisa ser maior que zero.`,
+  badGoalEntry: (index: number) => `Movimentação ${index + 1} de caixinha: o valor não pode ser zero.`,
+  negativeGoal: (index: number) => `Caixinha ${index + 1}: as movimentações somam menos que zero.`,
 };
 
 const isRow = (value: unknown): value is Record<string, unknown> =>
@@ -179,7 +196,7 @@ export function validateBackup(raw: unknown, catalogIds: ReadonlySet<string>): B
     data[spec.name] = rows;
   }
 
-  for (const table of ['cards', 'recurrences', 'transactions'] as const) {
+  for (const table of ['cards', 'recurrences', 'transactions', 'goals'] as const) {
     if (new Set(data[table].map((r) => r.id)).size !== data[table].length) {
       return { ok: false, reason: BACKUP_REASONS.duplicateId(table) };
     }
@@ -196,6 +213,7 @@ export function validateBackup(raw: unknown, catalogIds: ReadonlySet<string>): B
 
   const cards = new Set(data.cards.map((r) => r.id));
   const recurrences = new Set(data.recurrences.map((r) => r.id));
+  const goals = new Set(data.goals.map((r) => r.id));
 
   const pointers: [BackupTableName, string, ReadonlySet<unknown>][] = [
     ['recurrences', 'card_id', cards],
@@ -203,6 +221,7 @@ export function validateBackup(raw: unknown, catalogIds: ReadonlySet<string>): B
     ['transactions', 'card_id', cards],
     ['transactions', 'category_id', catalogIds],
     ['category_budgets', 'category_id', catalogIds],
+    ['goal_entries', 'goal_id', goals],
   ];
   for (const [table, column, targets] of pointers) {
     const index = data[table].findIndex((row) => !targets.has(row[column]));
@@ -214,8 +233,10 @@ export function validateBackup(raw: unknown, catalogIds: ReadonlySet<string>): B
   const badType = data.transactions.findIndex((r) => r.type !== 'income' && r.type !== 'expense');
   if (badType >= 0) return { ok: false, reason: BACKUP_REASONS.badType(badType) };
 
-  const badDate = data.transactions.findIndex((r) => Number.isNaN(Date.parse(String(r.occurred_at))));
-  if (badDate >= 0) return { ok: false, reason: BACKUP_REASONS.badDate('transactions', badDate) };
+  for (const table of ['transactions', 'goal_entries'] as const) {
+    const badDate = data[table].findIndex((r) => Number.isNaN(Date.parse(String(r.occurred_at))));
+    if (badDate >= 0) return { ok: false, reason: BACKUP_REASONS.badDate(table, badDate) };
+  }
 
   // O servidor confere o que o SQLite do app conferia só pelo código: sinal, parcelas e meses.
   const badAmount = data.transactions.findIndex((r) => {
@@ -242,6 +263,23 @@ export function validateBackup(raw: unknown, catalogIds: ReadonlySet<string>): B
     const index = data[table].findIndex((r) => columns.some((c) => !MONTH_FORMAT.test(String(r[c]))));
     if (index >= 0) return { ok: false, reason: BACKUP_REASONS.badMonth(table, index) };
   }
+
+  // Caixinhas: meta positiva, prazo no formato AAAA-MM, movimentações diferentes de zero e saldo nunca negativo.
+  const badGoal = data.goals.findIndex((r) => (r.target_amount as number) <= 0);
+  if (badGoal >= 0) return { ok: false, reason: BACKUP_REASONS.badGoal(badGoal) };
+
+  const badGoalMonth = data.goals.findIndex((r) => r.target_month !== null && !MONTH_FORMAT.test(String(r.target_month)));
+  if (badGoalMonth >= 0) return { ok: false, reason: BACKUP_REASONS.badMonth('goals', badGoalMonth) };
+
+  const badEntry = data.goal_entries.findIndex((r) => Math.round((r.amount as number) * 100) === 0);
+  if (badEntry >= 0) return { ok: false, reason: BACKUP_REASONS.badGoalEntry(badEntry) };
+
+  const centsByGoal = new Map<unknown, number>();
+  for (const entry of data.goal_entries) {
+    centsByGoal.set(entry.goal_id, (centsByGoal.get(entry.goal_id) ?? 0) + Math.round((entry.amount as number) * 100));
+  }
+  const negativeGoal = data.goals.findIndex((r) => (centsByGoal.get(r.id) ?? 0) < 0);
+  if (negativeGoal >= 0) return { ok: false, reason: BACKUP_REASONS.negativeGoal(negativeGoal) };
 
   // Uma transferência tem exatamente duas pernas, e o `transfer_id` é o id da primeira.
   const byTransfer = new Map<unknown, BackupRow[]>();
