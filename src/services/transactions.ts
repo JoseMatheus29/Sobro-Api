@@ -1,11 +1,13 @@
 import { and, desc, eq, gte, lt, sql, type SQL } from 'drizzle-orm';
 
-import type { Executor, Tx } from '../db/client.js';
+import type { Db, Executor, Tx } from '../db/client.js';
 import { cards, categories, recurrences, transactions } from '../db/schema.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { runIdempotent, type IdempotencyKey, type Idempotent } from '../lib/idempotency.js';
 import { round2 } from '../lib/money.js';
 import { calendarNoon, monthKey, monthRange } from '../shared/month.js';
 import { escapeLike, searchWords } from '../shared/search.js';
+import { assertCategory } from './categories.js';
 import { createRecurrence, endRecurrence, updateRecurrence } from './recurrences.js';
 
 export const TRANSFER_CATEGORY_ID = 'transfer';
@@ -167,13 +169,6 @@ async function assertOwnCard(db: Executor, userId: string, cardId: number): Prom
   return card;
 }
 
-async function assertCategory(db: Executor, categoryId: string): Promise<void> {
-  const [category] = await db.select({ id: categories.id }).from(categories).where(eq(categories.id, categoryId));
-  if (!category) {
-    throw badRequest('Categoria inexistente.', 'validation_failed', [{ path: 'categoryId', message: 'Categoria inexistente.' }]);
-  }
-}
-
 function assertNotTransferCategory(categoryId: string): void {
   if (categoryId === TRANSFER_CATEGORY_ID) {
     throw badRequest('A categoria Transferência é só das transferências.', 'validation_failed', [
@@ -204,7 +199,19 @@ export interface CreateTransactionInput {
   repeat?: Repeat | undefined;
 }
 
-export async function createTransaction(
+// A transação e a recorrência (se houver) entram juntas, numa só transação SQL. Com `Idempotency-Key`,
+// repetir a chave devolve a transação já criada.
+export function createTransaction(
+  db: Db,
+  userId: string,
+  input: CreateTransactionInput,
+  timeZone: string,
+  key?: IdempotencyKey
+): Promise<Idempotent<TransactionRecord>> {
+  return runIdempotent(db, userId, 'POST /transactions', key, (tx) => insertTransaction(tx, userId, input, timeZone));
+}
+
+async function insertTransaction(
   tx: Tx,
   userId: string,
   input: CreateTransactionInput,
@@ -271,7 +278,17 @@ export interface UpdateTransactionInput {
   applyToNext?: boolean | undefined;
 }
 
-export async function updateTransaction(
+export function updateTransaction(
+  db: Db,
+  userId: string,
+  id: number,
+  patch: UpdateTransactionInput,
+  timeZone: string
+): Promise<TransactionRecord> {
+  return db.transaction((tx) => applyUpdate(tx, userId, id, patch, timeZone));
+}
+
+async function applyUpdate(
   tx: Tx,
   userId: string,
   id: number,
@@ -339,30 +356,51 @@ export async function updateTransaction(
 // ---- excluir ----
 
 // Excluir uma perna de transferência leva as duas, ou os saldos ficariam errados.
-export async function deleteTransaction(tx: Tx, userId: string, id: number): Promise<void> {
-  const [current] = await tx
-    .select({ transferId: transactions.transferId })
-    .from(transactions)
-    .where(and(eq(transactions.userId, userId), eq(transactions.id, id)));
-  if (!current) throw notFound('Transação não encontrada.');
+export function deleteTransaction(db: Db, userId: string, id: number): Promise<void> {
+  return db.transaction(async (tx) => {
+    const [current] = await tx
+      .select({ transferId: transactions.transferId })
+      .from(transactions)
+      .where(and(eq(transactions.userId, userId), eq(transactions.id, id)));
+    if (!current) throw notFound('Transação não encontrada.');
 
-  if (current.transferId !== null) {
-    await tx
-      .delete(transactions)
-      .where(and(eq(transactions.userId, userId), eq(transactions.transferId, current.transferId)));
-  } else {
-    await tx.delete(transactions).where(and(eq(transactions.userId, userId), eq(transactions.id, id)));
-  }
+    if (current.transferId !== null) {
+      await tx
+        .delete(transactions)
+        .where(and(eq(transactions.userId, userId), eq(transactions.transferId, current.transferId)));
+    } else {
+      await tx.delete(transactions).where(and(eq(transactions.userId, userId), eq(transactions.id, id)));
+    }
+  });
 }
 
 // ---- transferências ----
 
-export async function createTransfer(
-  tx: Tx,
+export interface TransferInput {
+  fromCardId: number;
+  toCardId: number;
+  amount: number;
+  description: string | null;
+  occurredAt: Date;
+}
+
+export interface TransferResult {
+  transferId: number;
+  legs: TransactionRecord[];
+}
+
+// As duas pernas entram juntas, numa só transação SQL. Com `Idempotency-Key`, repetir a chave devolve a mesma transferência.
+export function createTransfer(
+  db: Db,
   userId: string,
-  input: { fromCardId: number; toCardId: number; amount: number; description: string | null; occurredAt: Date },
-  timeZone: string
-): Promise<{ transferId: number; legs: TransactionRecord[] }> {
+  input: TransferInput,
+  timeZone: string,
+  key?: IdempotencyKey
+): Promise<Idempotent<TransferResult>> {
+  return runIdempotent(db, userId, 'POST /transfers', key, (tx) => insertTransfer(tx, userId, input, timeZone));
+}
+
+async function insertTransfer(tx: Tx, userId: string, input: TransferInput, timeZone: string): Promise<TransferResult> {
   if (input.fromCardId === input.toCardId) {
     throw badRequest('A transferência precisa ser entre contas diferentes.', 'validation_failed', [
       { path: 'toCardId', message: 'Escolha uma conta diferente da de origem.' },

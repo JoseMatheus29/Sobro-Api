@@ -1,8 +1,9 @@
 import { and, asc, count, eq, inArray, or, sql } from 'drizzle-orm';
 
-import type { Executor, Tx } from '../db/client.js';
+import type { Db, Executor, Tx } from '../db/client.js';
 import { cards, recurrences, transactions } from '../db/schema.js';
 import { conflict, notFound } from '../lib/errors.js';
+import { runIdempotent, type IdempotencyKey, type Idempotent } from '../lib/idempotency.js';
 
 export interface CardRecord {
   id: number;
@@ -43,11 +44,20 @@ export async function getCard(db: Executor, userId: string, id: number): Promise
   return row;
 }
 
-export async function createCard(
-  db: Executor,
-  userId: string,
-  input: { name: string; number: string; color: string; lightColor: string; startingBalance: number }
-): Promise<CardRecord> {
+export interface CardInput {
+  name: string;
+  number: string;
+  color: string;
+  lightColor: string;
+  startingBalance: number;
+}
+
+// Com `Idempotency-Key`, repetir a chave devolve a conta já criada em vez de criar outra.
+export function createCard(db: Db, userId: string, input: CardInput, key?: IdempotencyKey): Promise<Idempotent<CardRecord>> {
+  return runIdempotent(db, userId, 'POST /cards', key, (tx) => insertCard(tx, userId, input));
+}
+
+async function insertCard(db: Executor, userId: string, input: CardInput): Promise<CardRecord> {
   const [row] = await db
     .insert(cards)
     .values({
@@ -110,14 +120,16 @@ export async function cardUsage(
 }
 
 // Tudo numa transação SQL: nunca sobra uma perna de transferência sozinha.
-export async function deleteCard(tx: Tx, userId: string, id: number): Promise<void> {
-  // Trava as contas da pessoa: duas exclusões simultâneas não podem tirar a última.
-  const owned = await tx.select({ id: cards.id }).from(cards).where(eq(cards.userId, userId)).for('update');
-  if (!owned.some((c) => c.id === id)) throw notFound('Conta não encontrada.');
-  if (owned.length <= 1) throw conflict('last_card', 'Não dá para excluir a última conta.');
+export function deleteCard(db: Db, userId: string, id: number): Promise<void> {
+  return db.transaction(async (tx: Tx) => {
+    // Trava as contas da pessoa: duas exclusões simultâneas não podem tirar a última.
+    const owned = await tx.select({ id: cards.id }).from(cards).where(eq(cards.userId, userId)).for('update');
+    if (!owned.some((c) => c.id === id)) throw notFound('Conta não encontrada.');
+    if (owned.length <= 1) throw conflict('last_card', 'Não dá para excluir a última conta.');
 
-  await tx.delete(recurrences).where(and(eq(recurrences.userId, userId), eq(recurrences.cardId, id)));
-  await tx.delete(transactions).where(ofAccount(userId, id));
-  await tx.delete(cards).where(and(eq(cards.userId, userId), eq(cards.id, id)));
+    await tx.delete(recurrences).where(and(eq(recurrences.userId, userId), eq(recurrences.cardId, id)));
+    await tx.delete(transactions).where(ofAccount(userId, id));
+    await tx.delete(cards).where(and(eq(cards.userId, userId), eq(cards.id, id)));
+  });
 }
 

@@ -74,9 +74,12 @@ export async function register(ctx: AuthContext, input: { email: string; passwor
   });
 }
 
-export async function login(ctx: AuthContext, input: { email: string; password: string }): Promise<Session> {
+export async function login(
+  ctx: AuthContext,
+  input: { email: string; password: string }
+): Promise<{ session: Session; user: { id: string; email: string } }> {
   const [user] = await ctx.db
-    .select({ id: users.id, passwordHash: users.passwordHash })
+    .select({ id: users.id, email: users.email, passwordHash: users.passwordHash })
     .from(users)
     .where(eq(users.email, normalizeEmail(input.email)));
 
@@ -84,7 +87,7 @@ export async function login(ctx: AuthContext, input: { email: string; password: 
   const valid = await verifyPassword(user?.passwordHash ?? (await dummyHash()), input.password);
   if (!user || !valid) throw unauthorized('E-mail ou senha incorretos.', 'invalid_credentials');
 
-  return sessionFor(ctx.db, ctx, user.id, crypto.randomUUID());
+  return { session: await sessionFor(ctx.db, ctx, user.id, crypto.randomUUID()), user: { id: user.id, email: user.email } };
 }
 
 // Renova a sessão. O token de renovação é trocado a cada uso; o recém-trocado continua aceito por uma

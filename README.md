@@ -34,8 +34,9 @@ Importe `postman/sobro-api.postman_collection.json` e `postman/sobro-local.postm
 
 | Pasta | O que tem |
 | --- | --- |
-| `src/routes` | Rotas HTTP (`auth`, `me`, `data`). Validam a entrada com Zod e chamam os serviços. |
-| `src/services` | Regras e consultas: contas, transações, recorrências, relatórios, autenticação, backup. |
+| `src/routes` | Só ligam caminho a controller e carregam opções da rota (limite de tentativas, tamanho do corpo). |
+| `src/controllers` | Um por recurso (`cards`, `transactions`, `auth`...). Validam a entrada com Zod, chamam os serviços e escolhem a resposta HTTP. |
+| `src/services` | Regras e consultas ao banco: contas, transações, recorrências, relatórios, autenticação, backup. Não conhecem HTTP. |
 | `src/shared` | Regras puras portadas do app (`month`, `recurrence`, `search`, `backup`). Mantenha em dia com `utils/` do app. |
 | `src/db` | Schema Drizzle, cliente e migrações. As migrações ficam em `drizzle/`. |
 | `src/lib` | Erros, senhas, tokens, e-mail, idempotência, logs. |

@@ -220,7 +220,6 @@ export const idempotencyKeys = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     key: text('key').notNull(),
-    statusCode: integer('status_code'),
     response: jsonb('response'),
     createdAt: createdAt(),
   },

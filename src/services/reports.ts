@@ -3,6 +3,7 @@ import { and, asc, desc, eq, gte, isNull, lt, sql } from 'drizzle-orm';
 import type { Executor } from '../db/client.js';
 import { categories, categoryBudgets, monthlyBudgets, transactions } from '../db/schema.js';
 import { monthRange } from '../shared/month.js';
+import { assertCategory } from './categories.js';
 
 export interface MonthTotals {
   month: string;
@@ -105,6 +106,7 @@ export async function setCategoryBudget(
   month: string,
   amount: number | null
 ): Promise<void> {
+  await assertCategory(db, categoryId);
   await db
     .insert(categoryBudgets)
     .values({ userId, categoryId, month, amount })

@@ -10,9 +10,7 @@ import { AppError, unauthorized, zodFields } from './lib/errors.js';
 import type { Mailer } from './lib/mailer.js';
 import { createAccessTokenSigner } from './lib/tokens.js';
 import { compareVersions } from './lib/version.js';
-import { authRoutes } from './routes/auth.js';
-import { dataRoutes } from './routes/data.js';
-import { meRoutes } from './routes/me.js';
+import { registerProtectedRoutes, registerPublicRoutes } from './routes/index.js';
 
 export interface AppDeps {
   db: Db;
@@ -112,7 +110,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         }
       });
 
-      await authRoutes(v1, ctx);
+      registerPublicRoutes(v1, ctx);
 
       // Tudo daqui para baixo exige sessão. O usuário vem do token, nunca de um campo enviado.
       await v1.register(async (protectedScope) => {
@@ -126,8 +124,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
             throw unauthorized();
           }
         });
-        await meRoutes(protectedScope, ctx);
-        await dataRoutes(protectedScope, ctx);
+        registerProtectedRoutes(protectedScope, ctx);
       });
     },
     { prefix: API_PREFIX }

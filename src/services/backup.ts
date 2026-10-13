@@ -1,6 +1,6 @@
 import { asc, eq } from 'drizzle-orm';
 
-import type { Db, Executor, Tx } from '../db/client.js';
+import type { Db, Tx } from '../db/client.js';
 import {
   cards,
   categories,
@@ -10,6 +10,7 @@ import {
   recurrences,
   transactions,
 } from '../db/schema.js';
+import { badRequest } from '../lib/errors.js';
 import { round2 } from '../lib/money.js';
 import {
   BACKUP_APP,
@@ -17,14 +18,11 @@ import {
   BACKUP_SCHEMA_VERSION,
   type BackupFile,
   type BackupRow,
+  validateBackup,
   type ValidBackup,
 } from '../shared/backup.js';
 import { calendarNoon } from '../shared/month.js';
-
-export async function categoryIds(db: Executor): Promise<Set<string>> {
-  const rows = await db.select({ id: categories.id }).from(categories);
-  return new Set(rows.map((r) => r.id));
-}
+import { categoryIds } from './categories.js';
 
 // Tudo da pessoa no formato do backup do app (serve também para a LGPD). Os ids são os do servidor;
 // o `transfer_id` aponta para a primeira perna, como no app.
@@ -230,4 +228,11 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
       }))
     );
   }
+}
+
+// Confere o arquivo recebido e só então substitui tudo. Recusa com 400 `invalid_backup` sem mexer em nada.
+export async function importBackup(db: Db, userId: string, raw: unknown, timeZone: string): Promise<void> {
+  const validation = validateBackup(raw, await categoryIds(db));
+  if (!validation.ok) throw badRequest(validation.reason, 'invalid_backup');
+  await db.transaction((tx) => restoreBackup(tx, userId, validation.backup, timeZone));
 }
