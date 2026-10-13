@@ -67,6 +67,22 @@
       "value": ""
     },
     {
+      "key": "goalId",
+      "value": ""
+    },
+    {
+      "key": "goalEntryId",
+      "value": ""
+    },
+    {
+      "key": "goalWithdrawId",
+      "value": ""
+    },
+    {
+      "key": "goalMonth",
+      "value": ""
+    },
+    {
       "key": "recurrenceId",
       "value": ""
     },
@@ -1215,6 +1231,439 @@
               }
             },
             "description": "Uma transferência não se edita: exclua e crie outra."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Caixinhas",
+      "description": "Reservam dinheiro que continua nas contas: não mexem em saldo, relatórios nem transações.",
+      "item": [
+        {
+          "name": "Criar caixinha",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Prazo: 6 meses à frente (AAAA-MM).",
+                  "const d = new Date();",
+                  "d.setUTCMonth(d.getUTCMonth() + 6);",
+                  "pm.collectionVariables.set('goalMonth', d.toISOString().slice(0, 7));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const g = pm.response.json();",
+                  "pm.collectionVariables.set('goalId', g.id);",
+                  "pm.test('começa com zero guardado', () => pm.expect(g.saved).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Viagem\",\n  \"targetAmount\": 3000,\n  \"targetMonth\": \"{{goalMonth}}\",\n  \"color\": \"#3161B2\",\n  \"icon\": \"flight\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Nome de até 30 caracteres; prazo opcional (AAAA-MM, no máximo 120 meses à frente; use null para sem prazo). Aceita Idempotency-Key. Guarda o id em goalId."
+          }
+        },
+        {
+          "name": "Listar caixinhas",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('é uma lista com saved', () => pm.expect(pm.response.json()[0].saved).to.be.a('number'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals"
+              ]
+            },
+            "description": "Cada item traz saved: a soma das movimentações, calculada."
+          }
+        },
+        {
+          "name": "Ver caixinha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals/{{goalId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals",
+                "{{goalId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Editar caixinha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals/{{goalId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals",
+                "{{goalId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Viagem a Paris\",\n  \"targetAmount\": 4000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Guardar (valor positivo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('goalEntryId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals/{{goalId}}/entries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals",
+                "{{goalId}}",
+                "entries"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 500\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "O valor é COM SINAL: positivo guarda. Sem occurredAt usa o instante de agora. Aceita Idempotency-Key. O dinheiro não sai de nenhuma conta."
+          }
+        },
+        {
+          "name": "Retirar (valor negativo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('goalWithdrawId', pm.response.json().id);",
+                  "pm.sendRequest({ url: pm.variables.replaceIn('{{baseUrl}}/v1/goals/{{goalId}}'), method: 'GET', header: { Authorization: 'Bearer ' + pm.collectionVariables.get('accessToken') } }, (err, res) => {",
+                  "  pm.test('o guardado agora é 400', () => pm.expect(res.json().saved).to.eql(400));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals/{{goalId}}/entries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals",
+                "{{goalId}}",
+                "entries"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": -100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Retirar mais do que há (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('código goal_insufficient', () => pm.expect(pm.response.json().error.code).to.eql('goal_insufficient'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals/{{goalId}}/entries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals",
+                "{{goalId}}",
+                "entries"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": -100000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Só se retira o que há na caixinha. Nada é gravado."
+          }
+        },
+        {
+          "name": "Histórico da caixinha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('duas movimentações, a mais nova primeiro', () => pm.expect(pm.response.json().map((e) => e.amount)).to.eql([-100, 500]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals/{{goalId}}/entries",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals",
+                "{{goalId}}",
+                "entries"
+              ]
+            },
+            "description": "Do mais novo ao mais antigo."
+          }
+        },
+        {
+          "name": "Apagar o depósito (409: ficaria negativa)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('código goal_insufficient', () => pm.expect(pm.response.json().error.code).to.eql('goal_insufficient'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals/{{goalId}}/entries/{{goalEntryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals",
+                "{{goalId}}",
+                "entries",
+                "{{goalEntryId}}"
+              ]
+            },
+            "description": "O depósito de 500 sustenta a retirada de 100: apagá-lo deixaria a caixinha negativa."
+          }
+        },
+        {
+          "name": "Apagar movimentação (a retirada)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals/{{goalId}}/entries/{{goalWithdrawId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals",
+                "{{goalId}}",
+                "entries",
+                "{{goalWithdrawId}}"
+              ]
+            },
+            "description": "Apagar uma retirada só devolve dinheiro à caixinha."
+          }
+        },
+        {
+          "name": "Excluir caixinha",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/goals/{{goalId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "goals",
+                "{{goalId}}"
+              ]
+            },
+            "description": "Apaga a caixinha e o histórico. Nenhuma conta nem transação muda."
           }
         }
       ]

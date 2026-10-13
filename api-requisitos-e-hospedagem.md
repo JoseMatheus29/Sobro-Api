@@ -23,13 +23,15 @@ O servidor espelha as tabelas do SQLite atual (`db/schema.ts`, migração v6), c
 | Tabela | Campos principais | Observações |
 | --- | --- | --- |
 | users | id, email (único), password_hash, created_at | Login próprio. |
-| profile | user_id (PK), name, currency, reminders_enabled | Uma linha por usuário. `avatar_uri` e `monthly_budget` não vão: a foto foi removida e o orçamento mora em `monthly_budgets`. |
+| profile | user_id (PK), name, currency, reminders_enabled | Uma linha por usuário. `avatar_uri`, `monthly_budget` e `theme` não vão: a foto foi removida, o orçamento mora em `monthly_budgets` e o tema (claro, escuro ou do sistema) é preferência do aparelho e precisa valer antes do login, então fica só no app. A API não tem coluna, campo em `/me` nem validação de tema; o backup do app traz `theme` e a API o aceita e descarta. |
 | categories | id (texto: `food`, `salary`, `transfer`…), name, icon, color, bg | Catálogo global e somente leitura, igual para todos, porque o app não permite criar categorias. Vira por usuário se isso mudar. |
 | cards (contas) | id, user_id, name, number (últimos dígitos, opcional), color, light_color, balance | `balance` é o saldo inicial. A API devolve também o saldo atual (inicial + soma das transações), sempre calculado e nunca gravado. |
 | transactions | id, user_id, card_id, category_id, name, description, amount, type (`income`/`expense`), occurred_at, created_at, recurrence_id, installment, transfer_id | `amount` com sinal, como no app. As duas pernas de uma transferência compartilham `transfer_id`. |
 | recurrences | id, user_id, card_id, category_id, name, description, amount, day, start_month, first_installment, total, end_month, generated_until | Só despesas se repetem. `generated_until` evita gerar a mesma ocorrência duas vezes. |
 | monthly_budgets | user_id, month (`YYYY-MM`), amount (nulo = sem orçamento) | Chave (user_id, month). Guarda o mês a partir do qual o valor vale. |
 | category_budgets | user_id, category_id, month, amount | Chave (user_id, category_id, month). Mesma lógica do orçamento mensal. |
+| goals (caixinhas) | id, user_id, name, target_amount, target_month (YYYY-MM, opcional), color, icon, created_at | O dinheiro continua nas contas: a caixinha só reserva parte dele e não mexe em saldo, nem em `/reports`, nem nos totais do mês. Nome de até 30 caracteres, meta maior que zero, prazo de no máximo 120 meses à frente (mês no passado é aceito). |
+| goal_entries | id, user_id, goal_id, amount, occurred_at, created_at | Positivo guarda, negativo retira, nunca zero. O valor da caixinha é a soma das movimentações, calculado (`saved`) e nunca gravado. `occurred_at` é o instante como veio, sem normalizar para meio-dia: o histórico é ordenado por ele e não entra em total de mês. Apagar a caixinha apaga o histórico. |
 
 **Tabelas de apoio da API** (não existem no app):
 
@@ -91,13 +93,17 @@ Com o app online, a API é um REST comum: um recurso por tabela, mais as operaç
 | PATCH /transactions/:id | Editar | `applyToNext: true` altera também as próximas da recorrência |
 | DELETE /transactions/:id | Excluir | se for perna de transferência, apaga as duas |
 | POST /transfers | Transferir entre contas | cria as duas pernas de uma vez |
+| GET /goals, POST /goals | Listar e criar caixinhas | a lista traz o valor guardado (`saved`) de cada uma; o POST aceita `Idempotency-Key` |
+| GET, PATCH e DELETE /goals/:id | Ver, editar e excluir uma caixinha | excluir apaga o histórico; nenhuma conta nem transação muda |
+| GET /goals/:id/entries | Histórico da caixinha | do mais novo ao mais antigo (`occurred_at` e `id` decrescentes) |
+| POST /goals/:id/entries, DELETE /goals/:id/entries/:entryId | Guardar, retirar (valor negativo) e apagar uma movimentação | recusa (409 `goal_insufficient`) retirar mais do que há e apagar um depósito que deixaria a caixinha negativa; a linha da caixinha é travada na checagem e na gravação; o POST aceita `Idempotency-Key` |
 | GET /recurrences | Listar recorrências | o app usa para previsão e lembretes |
 | POST /recurrences/:id/end | Encerrar uma recorrência | o que já foi gerado fica (`endRecurrence`) |
 | GET /budgets/monthly, PUT /budgets/monthly/:month | Orçamento por mês | `amount` nulo = sem orçamento |
 | GET /budgets/categories, PUT /budgets/categories/:categoryId/:month | Limite por categoria | mesma lógica |
 | GET /reports/monthly-totals | Entradas e saídas de cada mês, para o histórico | sem transferências (`transfer_id IS NULL`) |
 | GET /reports/category-totals?month= | Total por categoria do mês | sem transferências |
-| GET /backup | Baixar tudo no formato do backup atual | serve também para a LGPD |
+| GET /backup | Baixar tudo no formato do backup atual (v8) | serve também para a LGPD; traz também as caixinhas |
 | PUT /backup | Substituir tudo pelo conteúdo de um backup | valida como `validateBackup` e refaz os ids; é o caminho de migração dos testadores |
 | GET /health | Verificar se a API está de pé | 200, sem autenticação e sem tocar no banco |
 
@@ -107,7 +113,9 @@ Com o app online, a API é um REST comum: um recurso por tabela, mais as operaç
 
 **Saúde:** `GET /health` só diz que o processo está de pé e não toca no banco. `GET /ready` testa o banco, e é ele que o monitoramento da seção 7 usa.
 
-**`PUT /backup` é destrutivo:** substitui tudo numa única transação SQL (se falhar, nada muda), tem um limite de corpo próprio, maior que o das outras rotas, e exige confirmação explícita no app, que já mostra as contagens do arquivo. O servidor refaz os ids de contas, recorrências e transações, inclusive o `transfer_id`, que aponta para a primeira perna da transferência. Ignora o que a v2 não usa, como `avatar_uri` e o `monthly_budget` antigo do perfil, do mesmo jeito que o `validateBackup` já descarta colunas desconhecidas.
+**`PUT /backup` é destrutivo:** substitui tudo numa única transação SQL (se falhar, nada muda), tem um limite de corpo próprio, maior que o das outras rotas, e exige confirmação explícita no app, que já mostra as contagens do arquivo. O servidor refaz os ids de contas, recorrências e transações, inclusive o `transfer_id`, que aponta para a primeira perna da transferência. Ignora o que a v2 não usa, como `avatar_uri`, o `monthly_budget` antigo e o `theme` do perfil, do mesmo jeito que o `validateBackup` já descarta colunas desconhecidas.
+
+**Backup v8:** o arquivo (`schemaVersion` 8) traz também `goals` e `goal_entries`. Arquivos de qualquer versão de 1 a 8 entram (tabelas ausentes viram lista vazia, e um arquivo sem caixinhas apaga as da conta, como todo restore substitui tudo). Além do que já era conferido, a API recusa caixinhas com id repetido, movimentação apontando para caixinha que não está no arquivo, data inválida, meta zero, prazo fora de AAAA-MM, movimentação de valor zero e caixinha cuja soma fica negativa. O tema não faz parte do que a API guarda: o perfil exportado leva `theme: "system"` só para o arquivo ter o formato do app, e o que vier no arquivo é descartado.
 
 **Erros** num formato único: `{ "error": { "code": "validation_failed", "message": "...", "fields": [...] } }`, com 400 (validação), 401 (token), 404 (não existe ou é de outra pessoa), 409 (conflito, como excluir a última conta) e 429 (limite de tentativas).
 
