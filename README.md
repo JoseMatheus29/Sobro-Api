@@ -55,7 +55,8 @@ Com mais de uma instância, tire `runMigrations` de `src/server.ts` e rode `npm 
 - Tudo sob `/v1`; `/health` (processo de pé) e `/ready` (testa o banco) ficam na raiz, sem autenticação.
 - Erros: `{ "error": { "code", "message", "fields?" } }`.
 - Entrada de valor: magnitude positiva (`amount: 50`); a resposta devolve com sinal (despesa negativa).
-- Datas: `occurredAt` vira o dia de calendário em `America/Sao_Paulo`, gravado como meio-dia UTC.
+- Datas: o `occurredAt` de transações e transferências vira o dia de calendário em `America/Sao_Paulo`, gravado como meio-dia UTC. O das movimentações de caixinha fica como veio (é um instante, e o histórico se ordena por ele).
 - Listas de transações: `{ items, nextCursor }`; passe `cursor` para a próxima página.
 - `Idempotency-Key` (UUID) nos `POST` que criam algo: repetir a mesma chave devolve a resposta original.
+- Caixinhas: o `amount` de `POST /goals/:id/entries` é **com sinal** (positivo guarda, negativo retira), ao contrário das transações. `saved` vem calculado (soma das movimentações) e retirar mais do que há responde 409 `goal_insufficient`.
 - `X-App-Version`: com `MIN_APP_VERSION` definido, versões menores recebem 426.

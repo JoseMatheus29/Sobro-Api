@@ -5,6 +5,7 @@ import { createBackupController } from '../controllers/backup.controller.js';
 import { createBudgetsController } from '../controllers/budgets.controller.js';
 import { createCardsController } from '../controllers/cards.controller.js';
 import { createCategoriesController } from '../controllers/categories.controller.js';
+import { createGoalsController } from '../controllers/goals.controller.js';
 import { createMeController } from '../controllers/me.controller.js';
 import { createRecurrencesController } from '../controllers/recurrences.controller.js';
 import { createReportsController } from '../controllers/reports.controller.js';
@@ -17,6 +18,7 @@ import {
   budgetsRoutes,
   cardsRoutes,
   categoriesRoutes,
+  goalsRoutes,
   recurrencesRoutes,
   reportsRoutes,
   transactionsRoutes,
@@ -34,6 +36,7 @@ export function registerProtectedRoutes(app: FastifyInstance, ctx: Ctx) {
   categoriesRoutes(app, createCategoriesController(ctx));
   cardsRoutes(app, createCardsController(ctx));
   transactionsRoutes(app, createTransactionsController(ctx));
+  goalsRoutes(app, createGoalsController(ctx));
   recurrencesRoutes(app, createRecurrencesController(ctx));
   budgetsRoutes(app, createBudgetsController(ctx));
   reportsRoutes(app, createReportsController(ctx));

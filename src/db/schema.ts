@@ -175,6 +175,52 @@ export const categoryBudgets = pgTable(
   ]
 );
 
+// Caixinhas: o dinheiro continua nas contas; a caixinha só diz quanto dele está reservado. Não mexe em
+// saldo nem nos totais do mês. O valor guardado é a soma das movimentações, calculado e nunca gravado.
+export const goals = pgTable(
+  'goals',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    targetAmount: money('target_amount').notNull(),
+    // 'YYYY-MM' até onde guardar, ou nulo sem prazo.
+    targetMonth: text('target_month'),
+    color: text('color').notNull(),
+    icon: text('icon').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('goals_user_idx').on(t.userId),
+    check('goals_target_positive', sql`${t.targetAmount} > 0`),
+    check('goals_target_month_format', sql`${t.targetMonth} IS NULL OR ${t.targetMonth} ~ '^[0-9]{4}-[0-9]{2}$'`),
+  ]
+);
+
+export const goalEntries = pgTable(
+  'goal_entries',
+  {
+    id: integer('id').primaryKey().generatedAlwaysAsIdentity(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    goalId: integer('goal_id')
+      .notNull()
+      .references(() => goals.id, { onDelete: 'cascade' }),
+    // Com sinal: positivo guarda, negativo retira.
+    amount: money('amount').notNull(),
+    // O instante da movimentação, como veio: o histórico é ordenado por ele e não entra em total de mês.
+    occurredAt: timestamp('occurred_at', { withTimezone: true, mode: 'date' }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('goal_entries_user_goal_idx').on(t.userId, t.goalId),
+    check('goal_entries_amount_nonzero', sql`${t.amount} <> 0`),
+  ]
+);
+
 // ---- Tabelas de apoio da API (não existem no app) ----
 
 export const refreshTokens = pgTable(

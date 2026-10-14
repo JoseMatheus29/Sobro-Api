@@ -29,6 +29,13 @@
       "when": 1791926900433,
       "tag": "0003_idempotency_without_status",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791928212872,
+      "tag": "0004_goals",
+      "breakpoints": true
     }
   ]
 }
