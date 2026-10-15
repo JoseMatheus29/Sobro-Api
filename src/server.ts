@@ -4,7 +4,7 @@ import { createDb } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import { purgeIdempotencyKeys } from './lib/idempotency.js';
 import { loggerOptions } from './lib/logging.js';
-import { createConsoleMailer, createResendMailer } from './lib/mailer.js';
+import { createConsoleMailer, createDisabledMailer, createResendMailer } from './lib/mailer.js';
 
 const config = loadConfig();
 const handle = createDb(config.DATABASE_URL, config.DB_POOL_MAX, config.DB_SSL);
@@ -19,7 +19,9 @@ const app = await buildApp({
   logger: loggerOptions(config.NODE_ENV === 'production' ? 'info' : 'debug'),
   mailer: config.RESEND_API_KEY
     ? createResendMailer(config.RESEND_API_KEY, config.MAIL_FROM)
-    : createConsoleMailer((message) => app.log.info(message)),
+    : config.NODE_ENV === 'production'
+      ? createDisabledMailer((message) => app.log.warn(message))
+      : createConsoleMailer((message) => app.log.info(message)),
 });
 
 // Chaves de idempotência com mais de 24 horas não servem mais.
