@@ -10,6 +10,7 @@ import { AppError, unauthorized, zodFields } from './lib/errors.js';
 import type { Mailer } from './lib/mailer.js';
 import { createAccessTokenSigner } from './lib/tokens.js';
 import { compareVersions } from './lib/version.js';
+import { pageRoutes } from './routes/pages.js';
 import { registerProtectedRoutes, registerPublicRoutes } from './routes/index.js';
 
 export interface AppDeps {
@@ -97,6 +98,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return reply.code(503).send({ status: 'unavailable' });
     }
   });
+
+  // ---- páginas públicas (política de privacidade e exclusão de conta), fora de /v1 ----
+  await app.register(pageRoutes);
 
   // ---- /v1 ----
   await app.register(

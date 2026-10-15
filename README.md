@@ -80,6 +80,7 @@ Com mais de um dyno web, a migração continua só na release phase; tire `runMi
 ## Convenções da API
 
 - Tudo sob `/v1`; `/health` (processo de pé) e `/ready` (testa o banco) ficam na raiz, sem autenticação.
+- Páginas públicas na raiz, em HTML estático (`src/pages`, rotas em `src/routes/pages.ts`): `/privacidade` (política de privacidade) e `/excluir-conta` (excluir a conta e os dados pela web, exigência da loja; chama `POST /v1/auth/login` e `DELETE /v1/me`). O responsável e o e-mail de contato ficam em `SITE`, em `src/pages/layout.ts`. As respostas do formulário "Segurança dos dados" da Play estão em [seguranca-dos-dados-play.md](seguranca-dos-dados-play.md).
 - Erros: `{ "error": { "code", "message", "fields?" } }`.
 - Entrada de valor: magnitude positiva (`amount: 50`); a resposta devolve com sinal (despesa negativa).
 - Datas: o `occurredAt` de transações e transferências vira o dia de calendário em `America/Sao_Paulo`, gravado como meio-dia UTC. O das movimentações de caixinha fica como veio (é um instante, e o histórico se ordena por ele).
