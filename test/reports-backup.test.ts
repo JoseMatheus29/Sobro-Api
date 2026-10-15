@@ -95,7 +95,10 @@ describe('backup', () => {
     const goal = (await me.post('/goals', { name: 'Viagem', targetAmount: 1000, targetMonth: '2027-06', color: '#3161B2', icon: 'flight' })).body;
     await me.post(`/goals/${goal.id}/entries`, { amount: 300, occurredAt: '2026-10-02T14:30:00.000Z' });
     await me.post(`/goals/${goal.id}/entries`, { amount: -50, occurredAt: '2026-10-04T09:15:00.000Z' });
-    return { a, b, goal };
+    const pets = (await me.post('/categories', { name: 'Pets', icon: 'pets', color: '#E67E22', bg: 'rgba(230,126,34,0.12)' })).body;
+    await me.post('/transactions', tx(a, { name: 'Ração', amount: 35, categoryId: pets.id }));
+    await me.put(`/budgets/categories/${pets.id}/2026-10`, { amount: 200 });
+    return { a, b, goal, pets };
   }
 
   it('exporta no formato do app e o importa de volta refazendo os ids, com o mesmo resultado', async () => {
@@ -153,6 +156,14 @@ describe('backup', () => {
       [300, '2026-10-02T14:30:00.000Z'],
     ]);
     expect((await me.get('/me')).body).not.toHaveProperty('theme');
+    // A categoria do usuário viaja no arquivo, volta com id novo e continua ligada à transação e ao limite.
+    const customBefore = exported.data.categories.filter((c: { id: string }) => c.id.startsWith('custom-'));
+    expect(customBefore).toEqual([{ id: expect.any(String), name: 'Pets', icon: 'pets', color: '#E67E22', bg: 'rgba(230,126,34,0.12)' }]);
+    const customAfter = (await me.get('/categories')).body.filter((c: { custom: boolean }) => c.custom);
+    expect(customAfter).toEqual([{ id: expect.stringMatching(/^custom-/), name: 'Pets', icon: 'pets', color: '#E67E22', bg: 'rgba(230,126,34,0.12)', custom: true }]);
+    expect(customAfter[0].id).not.toBe(customBefore[0].id);
+    expect(items.find((x: { name: string }) => x.name === 'Ração')).toMatchObject({ categoryId: customAfter[0].id, categoryName: 'Pets' });
+    expect((await me.get('/budgets/categories')).body).toContainEqual({ categoryId: customAfter[0].id, month: '2026-10', amount: 200 });
     // A recorrência veio junto e aponta para a conta nova.
     const rec = (await me.get('/recurrences')).body;
     expect(rec).toHaveLength(1);
@@ -209,6 +220,7 @@ describe('backup', () => {
     icon: 'savings',
     ...extra,
   });
+  const customCategory = (id: string, extra: Record<string, unknown> = {}) => ({ id, name: 'Pets', icon: 'pets', color: '#E67E22', bg: 'rgba(230,126,34,0.12)', ...extra });
   const goalEntry = (id: number, goalId: number, amount: number) => ({ id, goal_id: goalId, amount, occurred_at: '2026-10-05T14:00:00.000Z' });
 
   const valid = () => ({
@@ -244,6 +256,10 @@ describe('backup', () => {
     ['caixinha cujas movimentações somam menos que zero', (b: any) => ((b.data.goals = [goal(1)]), (b.data.goal_entries = [goalEntry(1, 1, 10), goalEntry(2, 1, -20)]))],
     ['movimentação de caixinha com valor zero', (b: any) => ((b.data.goals = [goal(1)]), (b.data.goal_entries = [goalEntry(1, 1, 0)]))],
     ['movimentação de caixinha com data inválida', (b: any) => ((b.data.goals = [goal(1)]), (b.data.goal_entries = [{ ...goalEntry(1, 1, 10), occurred_at: 'ontem' }]))],
+    ['categoria própria com id repetido', (b: any) => (b.data.categories = [customCategory('custom-1'), customCategory('custom-1')])],
+    ['categoria própria sem nome', (b: any) => ((b.data.categories = [customCategory('custom-1')]), delete b.data.categories[0].name)],
+    ['transação apontando para categoria própria que não está no arquivo', (b: any) => (b.data.transactions[0].category_id = 'custom-9999')],
+    ['limite apontando para categoria própria que não está no arquivo', (b: any) => (b.data.category_budgets = [{ category_id: 'custom-9999', month: '2026-10', amount: 1 }])],
     ['caixinha sem nome', (b: any) => ((b.data.goals = [goal(1)]), delete b.data.goals[0].name)],
   ])('recusa um backup com %s e não muda nada', async (_name, break_) => {
     const me = await signup(t.app);
@@ -343,6 +359,78 @@ describe('backup', () => {
     });
   });
 
+  describe('categorias do usuário no backup', () => {
+    const at = (data: Record<string, unknown>) => ({ app: 'sobro', format: 1, schemaVersion: 6, exportedAt: '2026-10-09T10:00:00.000Z', data });
+    const baseCards = [{ id: 1, name: 'Carteira', number: '0001', color: '#3161B2', light_color: '#4A74BB', balance: 0 }];
+
+    it('aceita um backup da v1 com categoria própria (id gerado pela data) e refaz o id', async () => {
+      const me = await signup(t.app);
+      const file = at({
+        categories: [{ id: 'food', name: 'Alimentação', icon: 'restaurant', color: '#E67E22', bg: 'rgba(230,126,34,0.12)' }, customCategory('custom-1728000000000')],
+        cards: baseCards,
+        recurrences: [{ id: 1, card_id: 1, category_id: 'custom-1728000000000', name: 'Banho', amount: 60, day: 5, start_month: '2026-09', generated_until: '2026-10' }],
+        transactions: [
+          { id: 1, card_id: 1, category_id: 'custom-1728000000000', name: 'Ração', amount: -35, type: 'expense', occurred_at: '2026-10-05T12:00:00.000Z' },
+          { id: 2, card_id: 1, category_id: 'custom-1728000000000', name: 'Banho', amount: -60, type: 'expense', occurred_at: '2026-09-05T12:00:00.000Z', recurrence_id: 1 },
+        ],
+        category_budgets: [{ category_id: 'custom-1728000000000', month: '2026-10', amount: 150 }],
+      });
+      expect((await me.put('/backup', file)).status).toBe(204);
+
+      const custom = (await me.get('/categories')).body.filter((c: { custom: boolean }) => c.custom);
+      expect(custom).toHaveLength(1);
+      expect(custom[0].id).not.toBe('custom-1728000000000');
+      const items = (await me.get('/transactions?limit=50')).body.items;
+      expect(items.map((x: { categoryName: string }) => x.categoryName)).toEqual(expect.arrayContaining(['Pets']));
+      expect(items.filter((x: { categoryId: string }) => x.categoryId === custom[0].id).length).toBeGreaterThanOrEqual(2);
+      expect((await me.get('/recurrences')).body[0]).toMatchObject({ categoryId: custom[0].id, categoryName: 'Pets' });
+      expect((await me.get('/budgets/categories')).body).toEqual([{ categoryId: custom[0].id, month: '2026-10', amount: 150 }]);
+
+      // O que a API exporta entra de volta.
+      expect((await me.put('/backup', (await me.get('/backup')).body)).status).toBe(204);
+      expect((await me.get('/categories')).body.filter((c: { custom: boolean }) => c.custom)).toHaveLength(1);
+    });
+
+    it('as categorias do catálogo que vêm no arquivo são ignoradas', async () => {
+      const me = await signup(t.app);
+      const file = at({ categories: [{ id: 'food', name: 'Comida alterada', icon: 'x', color: '#000000', bg: 'x' }], cards: baseCards });
+      expect((await me.put('/backup', file)).status).toBe(204);
+      expect((await me.get('/categories')).body.find((c: { id: string }) => c.id === 'food')).toMatchObject({ name: 'Alimentação', custom: false });
+    });
+
+    it('um backup sem categorias próprias apaga as do usuário, junto com o que as usava', async () => {
+      const me = await signup(t.app);
+      await populate(me);
+      expect((await me.get('/categories')).body.some((c: { custom: boolean }) => c.custom)).toBe(true);
+
+      expect((await me.put('/backup', at({ cards: baseCards }))).status).toBe(204);
+      expect((await me.get('/categories')).body.some((c: { custom: boolean }) => c.custom)).toBe(false);
+      expect((await me.get('/transactions')).body.items).toEqual([]);
+      expect((await me.get('/budgets/categories')).body).toEqual([]);
+    });
+
+    it('o backup de um usuário leva só as categorias dele', async () => {
+      const alice = await signup(t.app, 'Alice');
+      const bob = await signup(t.app, 'Bob');
+      await alice.post('/categories', { name: 'Da Alice', icon: 'pets', color: '#E67E22', bg: 'rgba(230,126,34,0.12)' });
+      await bob.post('/categories', { name: 'Do Bob', icon: 'pets', color: '#3161B2', bg: 'rgba(49,97,178,0.12)' });
+
+      const names = async (c: Client) =>
+        (await c.get('/backup')).body.data.categories.filter((x: { id: string }) => x.id.startsWith('custom-')).map((x: { name: string }) => x.name);
+      expect(await names(alice)).toEqual(['Da Alice']);
+      expect(await names(bob)).toEqual(['Do Bob']);
+    });
+
+    it('restaurar o backup de um não toca nas categorias do outro', async () => {
+      const alice = await signup(t.app, 'Alice');
+      const bob = await signup(t.app, 'Bob');
+      const mine = (await alice.post('/categories', { name: 'Da Alice', icon: 'pets', color: '#E67E22', bg: 'rgba(230,126,34,0.12)' })).body;
+
+      expect((await bob.put('/backup', (await bob.get('/backup')).body)).status).toBe(204);
+      expect((await alice.get('/categories')).body.find((c: { id: string }) => c.id === mine.id)).toMatchObject({ name: 'Da Alice' });
+    });
+  });
+
   describe('arquivo exportado pelo app v8 (fixture)', () => {
     type BackupFileLike = { data: Record<string, Record<string, unknown>[]> };
     const fixture = JSON.parse(readFileSync(new URL('./fixtures/app-backup-v8.json', import.meta.url), 'utf8')) as BackupFileLike;
@@ -352,15 +440,18 @@ describe('backup', () => {
       const d = file.data;
       const cardName = (id: unknown) => d.cards!.find((c) => c.id === id)!.name;
       const goalName = (id: unknown) => d.goals!.find((g) => g.id === id)!.name;
+      // As categorias próprias (custom-*) mudam de id: comparam-se pelo nome.
+      const categoryLabel = (id: unknown) => (String(id).startsWith('custom-') ? `custom:${d.categories!.find((c) => c.id === id)!.name}` : id);
       const sorted = (rows: unknown[][]) => rows.map((r) => JSON.stringify(r)).sort();
       return {
+        categories: sorted(d.categories!.filter((c) => String(c.id).startsWith('custom-')).map((c) => [c.name, c.icon, c.color, c.bg])),
         cards: sorted(d.cards!.map((c) => [c.name, c.number, c.balance])),
         transactions: sorted(
-          d.transactions!.map((x) => [cardName(x.card_id), x.category_id, x.name, x.amount, x.type, x.occurred_at, x.recurrence_id !== null, x.transfer_id !== null])
+          d.transactions!.map((x) => [cardName(x.card_id), categoryLabel(x.category_id), x.name, x.amount, x.type, x.occurred_at, x.recurrence_id !== null, x.transfer_id !== null])
         ),
         recurrences: sorted(d.recurrences!.map((r) => [cardName(r.card_id), r.name, r.amount, r.day, r.generated_until])),
         monthly_budgets: sorted(d.monthly_budgets!.map((b) => [b.month, b.amount])),
-        category_budgets: sorted(d.category_budgets!.map((b) => [b.category_id, b.month, b.amount])),
+        category_budgets: sorted(d.category_budgets!.map((b) => [categoryLabel(b.category_id), b.month, b.amount])),
         goals: sorted(d.goals!.map((g) => [g.name, g.target_amount, g.target_month, g.color, g.icon])),
         goal_entries: sorted(d.goal_entries!.map((e) => [goalName(e.goal_id), e.amount, e.occurred_at])),
       };
@@ -381,7 +472,7 @@ describe('backup', () => {
       expect(goals.map((g: { name: string; saved: number }) => [g.name, g.saved])).toEqual([['Viagem', 1000], ['Reserva', 300]]);
       // As caixinhas não mexem nas contas: o saldo da principal vem só das transações do arquivo.
       const cards = (await me.get('/cards')).body;
-      expect(cards.map((c: { name: string; balance: number }) => [c.name, c.balance])).toEqual([['Conta Principal', 2892.85], ['Poupança', 1800]]);
+      expect(cards.map((c: { name: string; balance: number }) => [c.name, c.balance])).toEqual([['Conta Principal', 2857.85], ['Poupança', 1800]]);
       expect((await me.get('/me')).body).toMatchObject({ name: 'Pessoa de Teste' });
     });
   });

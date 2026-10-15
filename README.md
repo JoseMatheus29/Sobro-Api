@@ -86,4 +86,5 @@ Com mais de um dyno web, a migração continua só na release phase; tire `runMi
 - Listas de transações: `{ items, nextCursor }`; passe `cursor` para a próxima página.
 - `Idempotency-Key` (UUID) nos `POST` que criam algo: repetir a mesma chave devolve a resposta original.
 - Caixinhas: o `amount` de `POST /goals/:id/entries` é **com sinal** (positivo guarda, negativo retira), ao contrário das transações. `saved` vem calculado (soma das movimentações) e retirar mais do que há responde 409 `goal_insufficient`.
+- Categorias: `GET /categories` traz o catálogo e as categorias do usuário (campo `custom`). Só as próprias se editam e se excluem; excluir uma em uso responde 409 `category_in_use`.
 - `X-App-Version`: com `MIN_APP_VERSION` definido, versões menores recebem 426.

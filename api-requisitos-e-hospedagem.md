@@ -24,7 +24,7 @@ O servidor espelha as tabelas do SQLite atual (`db/schema.ts`, migração v6), c
 | --- | --- | --- |
 | users | id, email (único), password_hash, created_at | Login próprio. |
 | profile | user_id (PK), name, currency, reminders_enabled | Uma linha por usuário. `avatar_uri`, `monthly_budget` e `theme` não vão: a foto foi removida, o orçamento mora em `monthly_budgets` e o tema (claro, escuro ou do sistema) é preferência do aparelho e precisa valer antes do login, então fica só no app. A API não tem coluna, campo em `/me` nem validação de tema; o backup do app traz `theme` e a API o aceita e descarta. |
-| categories | id (texto: `food`, `salary`, `transfer`…), name, icon, color, bg | Catálogo global e somente leitura, igual para todos, porque o app não permite criar categorias. Vira por usuário se isso mudar. |
+| categories | id (texto: `food`, `salary`, `custom-...`), user_id (nulo = catálogo), name, icon, color, bg, seq | `user_id` nulo é o **catálogo global**, somente leitura e igual para todos. Preenchido, é uma **categoria criada pelo usuário** (`custom-<32 hex>`, id gerado no servidor), visível e usável só por ele; `seq` guarda a ordem de criação. Excluir uma categoria com transações ou recorrências é recusado; os limites por categoria saem junto, como no app. |
 | cards (contas) | id, user_id, name, number (últimos dígitos, opcional), color, light_color, balance | `balance` é o saldo inicial. A API devolve também o saldo atual (inicial + soma das transações), sempre calculado e nunca gravado. |
 | transactions | id, user_id, card_id, category_id, name, description, amount, type (`income`/`expense`), occurred_at, created_at, recurrence_id, installment, transfer_id | `amount` com sinal, como no app. As duas pernas de uma transferência compartilham `transfer_id`. |
 | recurrences | id, user_id, card_id, category_id, name, description, amount, day, start_month, first_installment, total, end_month, generated_until | Só despesas se repetem. `generated_until` evita gerar a mesma ocorrência duas vezes. |
@@ -82,7 +82,9 @@ Com o app online, a API é um REST comum: um recurso por tabela, mais as operaç
 | POST /auth/reset-password | Definir nova senha | token do e-mail e senha nova |
 | GET /me, PATCH /me | Ler e alterar o perfil | nome, moeda, lembretes ligados |
 | DELETE /me | Excluir a conta e todos os dados | exige a senha de novo |
-| GET /categories | Catálogo de categorias | igual para todos |
+| GET /categories | Catálogo mais as categorias do usuário | cada item traz `custom` (verdadeiro nas do usuário); o catálogo vem primeiro, por nome, e as do usuário depois, na ordem de criação |
+| POST /categories | Criar uma categoria própria | `name` (até 30), `icon`, `color` (hexadecimal) e `bg`; o id é gerado no servidor; aceita `Idempotency-Key` |
+| PATCH /categories/:id, DELETE /categories/:id | Editar e excluir uma categoria própria | só as do usuário (o catálogo e as de outras pessoas respondem 404); excluir com transações ou recorrências responde 409 `category_in_use` |
 | GET /cards | Listar contas | inclui o saldo atual de cada uma |
 | POST /cards, PATCH /cards/:id | Criar e editar conta | |
 | GET /cards/:id/usage | Quantas transações e recorrências vão junto | para a confirmação de excluir (`getCardUsage`) |
@@ -116,6 +118,8 @@ Com o app online, a API é um REST comum: um recurso por tabela, mais as operaç
 **`PUT /backup` é destrutivo:** substitui tudo numa única transação SQL (se falhar, nada muda), tem um limite de corpo próprio, maior que o das outras rotas, e exige confirmação explícita no app, que já mostra as contagens do arquivo. O servidor refaz os ids de contas, recorrências e transações, inclusive o `transfer_id`, que aponta para a primeira perna da transferência. Ignora o que a v2 não usa, como `avatar_uri`, o `monthly_budget` antigo e o `theme` do perfil, do mesmo jeito que o `validateBackup` já descarta colunas desconhecidas.
 
 **Backup v8:** o arquivo (`schemaVersion` 8) traz também `goals` e `goal_entries`. Arquivos de qualquer versão de 1 a 8 entram (tabelas ausentes viram lista vazia, e um arquivo sem caixinhas apaga as da conta, como todo restore substitui tudo). Além do que já era conferido, a API recusa caixinhas com id repetido, movimentação apontando para caixinha que não está no arquivo, data inválida, meta zero, prazo fora de AAAA-MM, movimentação de valor zero e caixinha cuja soma fica negativa. O tema não faz parte do que a API guarda: o perfil exportado leva `theme: "system"` só para o arquivo ter o formato do app, e o que vier no arquivo é descartado.
+
+**Categorias do usuário no backup:** o arquivo traz as categorias próprias (ids `custom-*`) e a importação as recria **refazendo os ids**, remapeando transações, recorrências e limites por categoria. As categorias do catálogo que vierem no arquivo são ignoradas (valem as da API), e o `GET /backup` leva só o catálogo e as categorias do próprio usuário. A validação recusa `custom-*` repetido e referência a uma categoria `custom-*` que não está no arquivo. Com isso, o backup da v1 de quem criou categoria própria entra normalmente.
 
 **Erros** num formato único: `{ "error": { "code": "validation_failed", "message": "...", "fields": [...] } }`, com 400 (validação), 401 (token), 404 (não existe ou é de outra pessoa), 409 (conflito, como excluir a última conta) e 429 (limite de tentativas).
 

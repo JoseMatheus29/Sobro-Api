@@ -48,6 +48,9 @@ export type BackupValidation = { ok: true; backup: ValidBackup } | { ok: false; 
 
 export const BACKUP_APP = 'sobro';
 export const BACKUP_FORMAT = 1;
+/** As categorias que o usuário cria têm id `custom-...`; só elas viajam no backup (o catálogo vale o da API). */
+export const CUSTOM_CATEGORY_PREFIX = 'custom-';
+
 /** A versão do esquema do app (migração v8) que esta API entende. */
 export const BACKUP_SCHEMA_VERSION = 8;
 
@@ -211,16 +214,22 @@ export function validateBackup(raw: unknown, catalogIds: ReadonlySet<string>): B
     if (new Set(keys).size !== keys.length) return { ok: false, reason: BACKUP_REASONS.duplicateId(table) };
   }
 
+  // Categorias do usuário (ids `custom-*`) vêm no próprio arquivo. As do catálogo são ignoradas: valem as da API.
+  const customCategories = data.categories.filter((r) => String(r.id).startsWith(CUSTOM_CATEGORY_PREFIX));
+  const customIds = new Set(customCategories.map((r) => r.id));
+  if (customIds.size !== customCategories.length) return { ok: false, reason: BACKUP_REASONS.duplicateId('categories') };
+  const categoryTargets = new Set<unknown>([...catalogIds, ...customIds]);
+
   const cards = new Set(data.cards.map((r) => r.id));
   const recurrences = new Set(data.recurrences.map((r) => r.id));
   const goals = new Set(data.goals.map((r) => r.id));
 
   const pointers: [BackupTableName, string, ReadonlySet<unknown>][] = [
     ['recurrences', 'card_id', cards],
-    ['recurrences', 'category_id', catalogIds],
+    ['recurrences', 'category_id', categoryTargets],
     ['transactions', 'card_id', cards],
-    ['transactions', 'category_id', catalogIds],
-    ['category_budgets', 'category_id', catalogIds],
+    ['transactions', 'category_id', categoryTargets],
+    ['category_budgets', 'category_id', categoryTargets],
     ['goal_entries', 'goal_id', goals],
   ];
   for (const [table, column, targets] of pointers) {

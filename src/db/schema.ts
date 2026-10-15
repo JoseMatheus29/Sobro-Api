@@ -39,14 +39,23 @@ export const profile = pgTable('profile', {
   remindersEnabled: boolean('reminders_enabled').notNull().default(true),
 });
 
-// Catálogo global e somente leitura (o app não cria categorias).
-export const categories = pgTable('categories', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  icon: text('icon').notNull(),
-  color: text('color').notNull(),
-  bg: text('bg').notNull(),
-});
+// `user_id` nulo é o catálogo global (somente leitura, igual para todos); preenchido, é uma categoria
+// criada pelo usuário (id `custom-<uuid>`), só dele. O id é único no banco inteiro, então as junções por
+// `category_id` continuam valendo, e quem pode usar cada uma é conferido no serviço.
+export const categories = pgTable(
+  'categories',
+  {
+    id: text('id').primaryKey(),
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    icon: text('icon').notNull(),
+    color: text('color').notNull(),
+    bg: text('bg').notNull(),
+    // Ordem de criação (como o rowid do SQLite do app): as do usuário aparecem na ordem em que ele as fez.
+    seq: integer('seq').notNull().generatedAlwaysAsIdentity(),
+  },
+  (t) => [index('categories_user_idx').on(t.userId)]
+);
 
 export const cards = pgTable(
   'cards',

@@ -106,7 +106,7 @@ export async function setCategoryBudget(
   month: string,
   amount: number | null
 ): Promise<void> {
-  await assertCategory(db, categoryId);
+  await assertCategory(db, userId, categoryId);
   await db
     .insert(categoryBudgets)
     .values({ userId, categoryId, month, amount })

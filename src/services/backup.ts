@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, isNull, or } from 'drizzle-orm';
 
 import type { Db, Tx } from '../db/client.js';
 import {
@@ -20,18 +20,24 @@ import {
   BACKUP_SCHEMA_VERSION,
   type BackupFile,
   type BackupRow,
+  CUSTOM_CATEGORY_PREFIX,
   validateBackup,
   type ValidBackup,
 } from '../shared/backup.js';
 import { calendarNoon } from '../shared/month.js';
-import { categoryIds } from './categories.js';
+import { catalogCategoryIds, newCustomCategoryId } from './categories.js';
 
 // Tudo da pessoa no formato do backup do app (serve também para a LGPD). Os ids são os do servidor;
 // o `transfer_id` aponta para a primeira perna, como no app.
 export async function exportBackup(db: Db, userId: string, now = new Date()): Promise<BackupFile> {
   return db.transaction(async (tx) => {
     // Um retrato consistente (repeatable read), lido em sequência: a transação usa uma conexão só.
-    const catalog = await tx.select().from(categories);
+    // O catálogo e só as categorias deste usuário: as dos outros nunca entram no arquivo.
+    const catalog = await tx
+      .select()
+      .from(categories)
+      .where(or(isNull(categories.userId), eq(categories.userId, userId)))
+      .orderBy(asc(categories.seq));
     const cardRows = await tx.select().from(cards).where(eq(cards.userId, userId)).orderBy(asc(cards.id));
     const recurrenceRows = await tx.select().from(recurrences).where(eq(recurrences.userId, userId)).orderBy(asc(recurrences.id));
     const transactionRows = await tx.select().from(transactions).where(eq(transactions.userId, userId)).orderBy(asc(transactions.id));
@@ -133,7 +139,7 @@ function chunks<T>(list: T[]): T[][] {
 export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup, timeZone: string): Promise<void> {
   const { data } = backup;
 
-  // O que aponta para os outros sai primeiro. O perfil e as categorias ficam.
+  // O que aponta para os outros sai primeiro. O perfil e o catálogo de categorias ficam.
   await tx.delete(goalEntries).where(eq(goalEntries.userId, userId));
   await tx.delete(goals).where(eq(goals.userId, userId));
   await tx.delete(transactions).where(eq(transactions.userId, userId));
@@ -141,6 +147,8 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
   await tx.delete(categoryBudgets).where(eq(categoryBudgets.userId, userId));
   await tx.delete(monthlyBudgets).where(eq(monthlyBudgets.userId, userId));
   await tx.delete(cards).where(eq(cards.userId, userId));
+  // As categorias do próprio usuário, só depois de nada mais apontar para elas.
+  await tx.delete(categories).where(eq(categories.userId, userId));
 
   const me = data.profile[0];
   if (me) {
@@ -176,6 +184,20 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
     cardIds.set(row.id as number, created!.id);
   }
 
+  // Categorias do usuário: o id é refeito e as referências (transações, recorrências, limites) são remapeadas.
+  // As do catálogo que vierem no arquivo são ignoradas.
+  const customCategoryIds = new Map<string, string>();
+  for (const row of data.categories) {
+    const oldId = String(row.id);
+    if (!oldId.startsWith(CUSTOM_CATEGORY_PREFIX)) continue;
+    const [created] = await tx
+      .insert(categories)
+      .values({ id: newCustomCategoryId(), userId, name: String(row.name), icon: String(row.icon), color: String(row.color), bg: String(row.bg) })
+      .returning({ id: categories.id });
+    customCategoryIds.set(oldId, created!.id);
+  }
+  const categoryOf = (id: unknown) => customCategoryIds.get(String(id)) ?? String(id);
+
   const recurrenceIds = new Map<number, number>();
   for (const row of data.recurrences) {
     const [created] = await tx
@@ -183,7 +205,7 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
       .values({
         userId,
         cardId: cardIds.get(row.card_id as number)!,
-        categoryId: String(row.category_id),
+        categoryId: categoryOf(row.category_id),
         name: String(row.name),
         description: (row.description as string | null) ?? null,
         amount: round2(Number(row.amount)),
@@ -210,7 +232,7 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
           return {
             userId,
             cardId: cardIds.get(row.card_id as number)!,
-            categoryId: String(row.category_id),
+            categoryId: categoryOf(row.category_id),
             name: String(row.name),
             description: (row.description as string | null) ?? null,
             amount: row.type === 'expense' ? -magnitude : magnitude,
@@ -272,7 +294,7 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
     await tx.insert(categoryBudgets).values(
       batch.map((r) => ({
         userId,
-        categoryId: String(r.category_id),
+        categoryId: categoryOf(r.category_id),
         month: String(r.month),
         amount: r.amount === null ? null : round2(Number(r.amount)),
       }))
@@ -282,7 +304,7 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
 
 // Confere o arquivo recebido e só então substitui tudo. Recusa com 400 `invalid_backup` sem mexer em nada.
 export async function importBackup(db: Db, userId: string, raw: unknown, timeZone: string): Promise<void> {
-  const validation = validateBackup(raw, await categoryIds(db));
+  const validation = validateBackup(raw, await catalogCategoryIds(db));
   if (!validation.ok) throw badRequest(validation.reason, 'invalid_backup');
   await db.transaction((tx) => restoreBackup(tx, userId, validation.backup, timeZone));
 }

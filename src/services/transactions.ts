@@ -218,7 +218,7 @@ async function insertTransaction(
   timeZone: string
 ): Promise<TransactionRecord> {
   await assertOwnCard(tx, userId, input.cardId);
-  await assertCategory(tx, input.categoryId);
+  await assertCategory(tx, userId, input.categoryId);
   assertNotTransferCategory(input.categoryId);
   if (input.repeat && input.type !== 'expense') {
     throw badRequest('Só despesas se repetem.', 'validation_failed', [{ path: 'repeat', message: 'Só despesas se repetem.' }]);
@@ -312,7 +312,7 @@ async function applyUpdate(
 
   if (patch.cardId !== undefined) await assertOwnCard(tx, userId, patch.cardId);
   if (patch.categoryId !== undefined) {
-    await assertCategory(tx, patch.categoryId);
+    await assertCategory(tx, userId, patch.categoryId);
     assertNotTransferCategory(patch.categoryId);
   }
 
