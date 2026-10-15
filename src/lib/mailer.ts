@@ -21,6 +21,15 @@ export function createResendMailer(apiKey: string, from: string): Mailer {
   };
 }
 
+// Produção sem chave configurada: nenhum e-mail sai e o link (que carrega o token) nunca vai para o log.
+export function createDisabledMailer(log: (message: string) => void): Mailer {
+  return {
+    async sendPasswordReset() {
+      log('[mail] RESEND_API_KEY não configurada: o e-mail de redefinição de senha não foi enviado');
+    },
+  };
+}
+
 // Sem chave configurada: só o desenvolvimento local imprime o link (que carrega o token).
 export function createConsoleMailer(log: (message: string) => void): Mailer {
   return {
