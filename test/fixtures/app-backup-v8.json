@@ -13,7 +13,8 @@
       { "id": "salary", "name": "Salário", "icon": "account-balance", "color": "#277F2B", "bg": "rgba(39,127,43,0.12)" },
       { "id": "invest", "name": "Investimento", "icon": "trending-up", "color": "#1ABC9C", "bg": "rgba(26,188,156,0.12)" },
       { "id": "transfer", "name": "Transferência", "icon": "swap-horiz", "color": "#718096", "bg": "rgba(113,128,150,0.12)" },
-      { "id": "other", "name": "Outros", "icon": "category", "color": "#95A5A6", "bg": "rgba(149,165,166,0.12)" }
+      { "id": "other", "name": "Outros", "icon": "category", "color": "#95A5A6", "bg": "rgba(149,165,166,0.12)" },
+      { "id": "custom-1728000000000", "name": "Pets", "icon": "pets", "color": "#E67E22", "bg": "rgba(230,126,34,0.12)" }
     ],
     "cards": [
       { "id": 1, "name": "Conta Principal", "number": "0001", "color": "#3161B2", "light_color": "#4A74BB", "balance": 0 },
@@ -42,7 +43,8 @@
       { "id": 4, "card_id": 1, "category_id": "leisure", "name": "Streaming", "description": null, "amount": -39.9, "type": "expense", "occurred_at": "2026-09-12T12:00:00.000Z", "created_at": "2026-09-12 08:30:11", "recurrence_id": 1, "installment": null, "transfer_id": null },
       { "id": 5, "card_id": 1, "category_id": "leisure", "name": "Streaming", "description": null, "amount": -39.9, "type": "expense", "occurred_at": "2026-10-12T12:00:00.000Z", "created_at": "2026-10-12 09:45:57", "recurrence_id": 1, "installment": null, "transfer_id": null },
       { "id": 6, "card_id": 1, "category_id": "transfer", "name": "Para Poupança", "description": "Reserva", "amount": -300, "type": "expense", "occurred_at": "2026-10-06T12:00:00.000Z", "created_at": "2026-10-06 19:20:01", "recurrence_id": null, "installment": null, "transfer_id": 6 },
-      { "id": 7, "card_id": 2, "category_id": "transfer", "name": "De Conta Principal", "description": "Reserva", "amount": 300, "type": "income", "occurred_at": "2026-10-06T12:00:00.000Z", "created_at": "2026-10-06 19:20:01", "recurrence_id": null, "installment": null, "transfer_id": 6 }
+      { "id": 7, "card_id": 2, "category_id": "transfer", "name": "De Conta Principal", "description": "Reserva", "amount": 300, "type": "income", "occurred_at": "2026-10-06T12:00:00.000Z", "created_at": "2026-10-06 19:20:01", "recurrence_id": null, "installment": null, "transfer_id": 6 },
+      { "id": 8, "card_id": 1, "category_id": "custom-1728000000000", "name": "Ração", "description": null, "amount": -35, "type": "expense", "occurred_at": "2026-10-07T12:00:00.000Z", "created_at": "2026-10-07 17:10:09", "recurrence_id": null, "installment": null, "transfer_id": null }
     ],
     "profile": [
       { "id": 1, "name": "Pessoa de Teste", "currency": "BRL", "avatar_uri": "file:///data/user/0/app/files/avatar.jpg", "monthly_budget": null, "reminders_enabled": 1, "theme": "dark" }
@@ -52,7 +54,8 @@
       { "month": "2026-10", "amount": 3000 }
     ],
     "category_budgets": [
-      { "category_id": "food", "month": "2026-10", "amount": 800 }
+      { "category_id": "food", "month": "2026-10", "amount": 800 },
+      { "category_id": "custom-1728000000000", "month": "2026-10", "amount": 200 }
     ],
     "goals": [
       { "id": 1, "name": "Viagem", "target_amount": 3000, "target_month": "2027-06", "color": "#3161B2", "icon": "flight" },

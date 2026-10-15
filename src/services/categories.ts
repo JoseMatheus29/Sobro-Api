@@ -4,6 +4,7 @@ import { and, asc, count, eq, isNull, or } from 'drizzle-orm';
 import type { Db, Executor } from '../db/client.js';
 import { categories, categoryBudgets, recurrences, transactions } from '../db/schema.js';
 import { badRequest, conflict, notFound } from '../lib/errors.js';
+import { CUSTOM_CATEGORY_PREFIX } from '../shared/backup.js';
 import { runIdempotent, type IdempotencyKey, type Idempotent } from '../lib/idempotency.js';
 
 export interface CategoryRecord {
@@ -63,13 +64,16 @@ export async function assertCategory(db: Executor, userId: string, categoryId: s
   }
 }
 
-// O id é gerado aqui (`custom-` + 32 caracteres) e cabe nos 40 que as rotas aceitam. Com `Idempotency-Key`,
+// `custom-` + 32 caracteres: cabe nos 40 que as rotas aceitam e não colide entre usuários.
+export const newCustomCategoryId = () => `${CUSTOM_CATEGORY_PREFIX}${randomUUID().replaceAll('-', '')}`;
+
+// O id é gerado no servidor. Com `Idempotency-Key`,
 // repetir a chave devolve a categoria já criada em vez de criar outra.
 export function createCategory(db: Db, userId: string, input: CategoryInput, key?: IdempotencyKey): Promise<Idempotent<CategoryRecord>> {
   return runIdempotent(db, userId, 'POST /categories', key, async (tx) => {
     const [row] = await tx
       .insert(categories)
-      .values({ id: `custom-${randomUUID().replaceAll('-', '')}`, userId, ...input })
+      .values({ id: newCustomCategoryId(), userId, ...input })
       .returning(columns);
     return mapRow(row!);
   });
