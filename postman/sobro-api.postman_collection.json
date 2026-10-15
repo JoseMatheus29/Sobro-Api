@@ -67,6 +67,10 @@
       "value": ""
     },
     {
+      "key": "categoryId",
+      "value": ""
+    },
+    {
       "key": "goalId",
       "value": ""
     },
@@ -507,6 +511,7 @@
     },
     {
       "name": "Categorias",
+      "description": "O catálogo é fixo; as categorias próprias são só do usuário.",
       "item": [
         {
           "name": "Listar categorias",
@@ -517,7 +522,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
-                  "pm.test('9 categorias', () => pm.expect(pm.response.json()).to.have.length(9));"
+                  "pm.test('o catálogo (9) vem primeiro, sem as próprias', () => { const c = pm.response.json(); pm.expect(c.length).to.be.at.least(9); pm.expect(c.slice(0, 9).every((x) => x.custom === false)).to.eql(true); });"
                 ]
               }
             }
@@ -534,7 +539,171 @@
                 "v1",
                 "categories"
               ]
+            },
+            "description": "O catálogo global (por nome) e, depois, as categorias do usuário na ordem de criação. Cada item traz custom."
+          }
+        },
+        {
+          "name": "Criar categoria própria",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const c = pm.response.json();",
+                  "pm.collectionVariables.set('categoryId', c.id);",
+                  "pm.test('id gerado pelo servidor e custom', () => { pm.expect(c.id).to.match(/^custom-/); pm.expect(c.custom).to.eql(true); });"
+                ]
+              }
             }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "categories"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Pets\",\n  \"icon\": \"pets\",\n  \"color\": \"#E67E22\",\n  \"bg\": \"rgba(230,126,34,0.12)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "O id é gerado no servidor. Aceita Idempotency-Key. Guarda o id em categoryId."
+          }
+        },
+        {
+          "name": "Editar categoria própria",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/categories/{{categoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "categories",
+                "{{categoryId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Animais\",\n  \"color\": \"#3161B2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Só as suas: o catálogo e as de outras pessoas respondem 404."
+          }
+        },
+        {
+          "name": "Tentar editar uma do catálogo (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/categories/food",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "categories",
+                "food"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Comida\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Excluir categoria própria",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/categories/{{categoryId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "categories",
+                "{{categoryId}}"
+              ]
+            },
+            "description": "Com transações ou recorrências usando, responderia 409 category_in_use. Os limites por categoria saem junto."
           }
         }
       ]
