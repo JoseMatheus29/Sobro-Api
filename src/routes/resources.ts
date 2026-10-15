@@ -13,6 +13,9 @@ type Controller<F extends (...args: never[]) => unknown> = ReturnType<F>;
 
 export function categoriesRoutes(app: FastifyInstance, c: Controller<typeof createCategoriesController>) {
   app.get('/categories', c.list);
+  app.post('/categories', c.create);
+  app.patch('/categories/:id', c.update);
+  app.delete('/categories/:id', c.remove);
 }
 
 export function cardsRoutes(app: FastifyInstance, c: Controller<typeof createCardsController>) {

@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, isNull, or } from 'drizzle-orm';
 
 import type { Db, Tx } from '../db/client.js';
 import {
@@ -24,14 +24,19 @@ import {
   type ValidBackup,
 } from '../shared/backup.js';
 import { calendarNoon } from '../shared/month.js';
-import { categoryIds } from './categories.js';
+import { catalogCategoryIds } from './categories.js';
 
 // Tudo da pessoa no formato do backup do app (serve também para a LGPD). Os ids são os do servidor;
 // o `transfer_id` aponta para a primeira perna, como no app.
 export async function exportBackup(db: Db, userId: string, now = new Date()): Promise<BackupFile> {
   return db.transaction(async (tx) => {
     // Um retrato consistente (repeatable read), lido em sequência: a transação usa uma conexão só.
-    const catalog = await tx.select().from(categories);
+    // O catálogo e só as categorias deste usuário: as dos outros nunca entram no arquivo.
+    const catalog = await tx
+      .select()
+      .from(categories)
+      .where(or(isNull(categories.userId), eq(categories.userId, userId)))
+      .orderBy(asc(categories.seq));
     const cardRows = await tx.select().from(cards).where(eq(cards.userId, userId)).orderBy(asc(cards.id));
     const recurrenceRows = await tx.select().from(recurrences).where(eq(recurrences.userId, userId)).orderBy(asc(recurrences.id));
     const transactionRows = await tx.select().from(transactions).where(eq(transactions.userId, userId)).orderBy(asc(transactions.id));
@@ -282,7 +287,7 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
 
 // Confere o arquivo recebido e só então substitui tudo. Recusa com 400 `invalid_backup` sem mexer em nada.
 export async function importBackup(db: Db, userId: string, raw: unknown, timeZone: string): Promise<void> {
-  const validation = validateBackup(raw, await categoryIds(db));
+  const validation = validateBackup(raw, await catalogCategoryIds(db));
   if (!validation.ok) throw badRequest(validation.reason, 'invalid_backup');
   await db.transaction((tx) => restoreBackup(tx, userId, validation.backup, timeZone));
 }
