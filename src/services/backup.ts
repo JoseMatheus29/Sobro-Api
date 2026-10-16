@@ -62,6 +62,10 @@ export async function exportBackup(db: Db, userId: string, now = new Date()): Pr
           color: c.color,
           light_color: c.lightColor,
           balance: c.balance,
+          credit_last_digits: c.creditLastDigits,
+          credit_limit: c.creditLimit,
+          closing_day: c.closingDay,
+          due_day: c.dueDay,
         })),
         recurrences: recurrenceRows.map((r): BackupRow => ({
           id: r.id,
@@ -76,6 +80,7 @@ export async function exportBackup(db: Db, userId: string, now = new Date()): Pr
           total: r.total,
           end_month: r.endMonth,
           generated_until: r.generatedUntil,
+          payment_method: r.paymentMethod,
         })),
         transactions: transactionRows.map((t): BackupRow => ({
           id: t.id,
@@ -90,6 +95,8 @@ export async function exportBackup(db: Db, userId: string, now = new Date()): Pr
           recurrence_id: t.recurrenceId,
           installment: t.installment,
           transfer_id: t.transferId,
+          payment_method: t.paymentMethod,
+          invoice_month: t.invoiceMonth,
         })),
         profile: [
           {
@@ -179,6 +186,10 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
         color: String(row.color),
         lightColor: String(row.light_color),
         balance: round2(Number(row.balance ?? 0)),
+        creditLastDigits: (row.credit_last_digits as string | null) ?? null,
+        creditLimit: row.credit_limit === null || row.credit_limit === undefined ? null : round2(Number(row.credit_limit)),
+        closingDay: (row.closing_day as number | null) ?? null,
+        dueDay: (row.due_day as number | null) ?? null,
       })
       .returning({ id: cards.id });
     cardIds.set(row.id as number, created!.id);
@@ -215,6 +226,7 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
         total: (row.total as number | null) ?? null,
         endMonth: (row.end_month as string | null) ?? null,
         generatedUntil: String(row.generated_until),
+        paymentMethod: (row.payment_method as string | null) ?? null,
       })
       .returning({ id: recurrences.id });
     recurrenceIds.set(row.id as number, created!.id);
@@ -241,6 +253,8 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
             createdAt: Number.isNaN(createdAt) ? new Date() : new Date(createdAt),
             recurrenceId: row.recurrence_id === null ? null : recurrenceIds.get(row.recurrence_id as number)!,
             installment: (row.installment as number | null) ?? null,
+            paymentMethod: (row.payment_method as string | null) ?? null,
+            invoiceMonth: (row.invoice_month as string | null) ?? null,
           };
         })
       )

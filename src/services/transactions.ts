@@ -6,6 +6,7 @@ import { badRequest, conflict, notFound } from '../lib/errors.js';
 import { runIdempotent, type IdempotencyKey, type Idempotent } from '../lib/idempotency.js';
 import { round2 } from '../lib/money.js';
 import { calendarNoon, monthKey, monthRange } from '../shared/month.js';
+import { INVOICE_CATEGORY_ID, NO_CREDIT_MESSAGE, type PaymentMethod } from '../shared/payment.js';
 import { escapeLike, searchWords } from '../shared/search.js';
 import { assertCategory } from './categories.js';
 import { createRecurrence, endRecurrence, updateRecurrence } from './recurrences.js';
@@ -31,6 +32,10 @@ export interface TransactionRecord {
   createdAt: string;
   recurrence: { id: number; installment: number | null; total: number | null } | null;
   transferId: number | null;
+  /** 'pix', 'debit', 'credit' (entra na fatura e não mexe no saldo) ou null (sai do saldo). */
+  paymentMethod: PaymentMethod | null;
+  /** 'AAAA-MM' da fatura que este lançamento paga; só nos pagamentos de fatura. */
+  invoiceMonth: string | null;
 }
 
 const txColumns = {
@@ -51,6 +56,8 @@ const txColumns = {
   installment: transactions.installment,
   recurrenceTotal: recurrences.total,
   transferId: transactions.transferId,
+  paymentMethod: transactions.paymentMethod,
+  invoiceMonth: transactions.invoiceMonth,
 };
 
 function selectTransactions(db: Executor) {
@@ -84,6 +91,8 @@ function mapRow(row: TxRow): TransactionRecord {
         ? { id: row.recurrenceId, installment: row.installment, total: row.recurrenceTotal }
         : null,
     transferId: row.transferId,
+    paymentMethod: row.paymentMethod as PaymentMethod | null,
+    invoiceMonth: row.invoiceMonth,
   };
 }
 
@@ -100,6 +109,7 @@ export interface ListFilters {
   cardId?: number;
   categoryId?: string;
   type?: TransactionType;
+  paymentMethod?: PaymentMethod;
   q?: string;
   limit: number;
   cursor?: string;
@@ -132,6 +142,7 @@ export async function listTransactions(
   if (f.cardId !== undefined) conditions.push(eq(transactions.cardId, f.cardId));
   if (f.categoryId !== undefined) conditions.push(eq(transactions.categoryId, f.categoryId));
   if (f.type !== undefined) conditions.push(eq(transactions.type, f.type));
+  if (f.paymentMethod !== undefined) conditions.push(eq(transactions.paymentMethod, f.paymentMethod));
 
   // Cada palavra precisa estar no nome, na descrição, na categoria ou na conta, sem acento nem caixa.
   for (const word of searchWords(f.q ?? '')) {
@@ -160,19 +171,38 @@ export async function listTransactions(
 
 // ---- validações de referência ----
 
-async function assertOwnCard(db: Executor, userId: string, cardId: number): Promise<{ name: string }> {
+// FOR SHARE: tirar o cartão da conta ao mesmo tempo espera esta gravação terminar.
+async function assertOwnCard(db: Executor, userId: string, cardId: number): Promise<{ name: string; hasCredit: boolean }> {
   const [card] = await db
-    .select({ name: cards.name })
+    .select({ name: cards.name, closingDay: cards.closingDay })
     .from(cards)
-    .where(and(eq(cards.userId, userId), eq(cards.id, cardId)));
+    .where(and(eq(cards.userId, userId), eq(cards.id, cardId)))
+    .for('share');
   if (!card) throw notFound('Conta não encontrada.');
-  return card;
+  return { name: card.name, hasCredit: card.closingDay !== null };
 }
 
+function fieldError(path: string, message: string) {
+  return badRequest(message, 'validation_failed', [{ path, message }]);
+}
+
+// A forma de pagamento só vale em despesa, e o crédito exige uma conta com cartão.
+function assertPaymentMethod(method: PaymentMethod | null, type: TransactionType, hasCredit: boolean): void {
+  if (method === null) return;
+  if (type !== 'expense') throw fieldError('paymentMethod', 'Só despesas têm forma de pagamento.');
+  if (method === 'credit' && !hasCredit) throw fieldError('paymentMethod', NO_CREDIT_MESSAGE);
+}
+
+// Transferência e fatura têm rotas próprias: as categorias delas não servem para um lançamento comum.
 function assertNotTransferCategory(categoryId: string): void {
   if (categoryId === TRANSFER_CATEGORY_ID) {
     throw badRequest('A categoria Transferência é só das transferências.', 'validation_failed', [
       { path: 'categoryId', message: 'Use /transfers para transferir entre contas.' },
+    ]);
+  }
+  if (categoryId === INVOICE_CATEGORY_ID) {
+    throw badRequest('A categoria Fatura do cartão é só dos pagamentos de fatura.', 'validation_failed', [
+      { path: 'categoryId', message: 'Use /cards/:id/invoice-payments para pagar a fatura.' },
     ]);
   }
 }
@@ -197,6 +227,8 @@ export interface CreateTransactionInput {
   type: TransactionType;
   occurredAt: Date;
   repeat?: Repeat | undefined;
+  /** 'pix', 'debit' ou 'credit'; sem ele (ou nulo), a saída sai do saldo. */
+  paymentMethod?: PaymentMethod | null | undefined;
 }
 
 // A transação e a recorrência (se houver) entram juntas, numa só transação SQL. Com `Idempotency-Key`,
@@ -217,9 +249,11 @@ async function insertTransaction(
   input: CreateTransactionInput,
   timeZone: string
 ): Promise<TransactionRecord> {
-  await assertOwnCard(tx, userId, input.cardId);
+  const card = await assertOwnCard(tx, userId, input.cardId);
   await assertCategory(tx, userId, input.categoryId);
   assertNotTransferCategory(input.categoryId);
+  const paymentMethod = input.paymentMethod ?? null;
+  assertPaymentMethod(paymentMethod, input.type, card.hasCredit);
   if (input.repeat && input.type !== 'expense') {
     throw badRequest('Só despesas se repetem.', 'validation_failed', [{ path: 'repeat', message: 'Só despesas se repetem.' }]);
   }
@@ -242,6 +276,7 @@ async function insertTransaction(
       startMonth: monthKey(occurredAt),
       firstInstallment,
       total: plan ? plan.total : null,
+      paymentMethod,
     });
     installment = plan ? firstInstallment : null;
   }
@@ -259,6 +294,7 @@ async function insertTransaction(
       occurredAt,
       recurrenceId,
       installment,
+      paymentMethod,
     })
     .returning({ id: transactions.id });
   return getTransaction(tx, userId, row!.id);
@@ -274,6 +310,7 @@ export interface UpdateTransactionInput {
   amount?: number | undefined;
   type?: TransactionType | undefined;
   occurredAt?: Date | undefined;
+  paymentMethod?: PaymentMethod | null | undefined;
   /** Aplica também às próximas da recorrência. */
   applyToNext?: boolean | undefined;
 }
@@ -301,11 +338,17 @@ async function applyUpdate(
       amount: transactions.amount,
       transferId: transactions.transferId,
       recurrenceId: transactions.recurrenceId,
+      cardId: transactions.cardId,
+      categoryId: transactions.categoryId,
+      paymentMethod: transactions.paymentMethod,
     })
     .from(transactions)
     .where(and(eq(transactions.userId, userId), eq(transactions.id, id)))
     .for('update');
   if (!current) throw notFound('Transação não encontrada.');
+  if (current.categoryId === INVOICE_CATEGORY_ID) {
+    throw conflict('invoice_payment_not_editable', 'Um pagamento de fatura não se edita: exclua e registre outro.');
+  }
   if (current.transferId !== null) {
     throw conflict('transfer_not_editable', 'Uma transferência não se edita: exclua e crie outra.');
   }
@@ -317,6 +360,19 @@ async function applyUpdate(
   }
 
   const type = (patch.type ?? current.type) as TransactionType;
+
+  // A forma de pagamento que vale depois da edição. Receita não tem: se a despesa vira receita, o método vira
+  // nulo sozinho (como a recorrência é encerrada); pedir um método numa receita é recusado.
+  if (type === 'income' && patch.paymentMethod) {
+    throw fieldError('paymentMethod', 'Só despesas têm forma de pagamento.');
+  }
+  const paymentMethod: PaymentMethod | null =
+    type === 'income' ? null : patch.paymentMethod !== undefined ? patch.paymentMethod : (current.paymentMethod as PaymentMethod | null);
+  // No crédito, a conta (a nova, se a troca) precisa ter cartão.
+  if (paymentMethod === 'credit') {
+    const card = await assertOwnCard(tx, userId, patch.cardId ?? current.cardId);
+    assertPaymentMethod(paymentMethod, type, card.hasCredit);
+  }
   const set: Partial<typeof transactions.$inferInsert> = {};
   if (patch.cardId !== undefined) set.cardId = patch.cardId;
   if (patch.categoryId !== undefined) set.categoryId = patch.categoryId;
@@ -324,6 +380,7 @@ async function applyUpdate(
   if (patch.description !== undefined) set.description = patch.description;
   if (patch.occurredAt !== undefined) set.occurredAt = normalizeDate(patch.occurredAt, timeZone);
   if (patch.type !== undefined) set.type = patch.type;
+  if (paymentMethod !== current.paymentMethod) set.paymentMethod = paymentMethod;
   // O sinal sempre acompanha o tipo, mesmo quando só um dos dois muda.
   if (patch.amount !== undefined || patch.type !== undefined) {
     const magnitude = patch.amount !== undefined ? round2(Math.abs(patch.amount)) : Math.abs(current.amount);
@@ -347,6 +404,7 @@ async function applyUpdate(
         ...(patch.name !== undefined ? { name: patch.name } : {}),
         ...(patch.description !== undefined ? { description: patch.description } : {}),
         ...(patch.amount !== undefined ? { amount: round2(Math.abs(patch.amount)) } : {}),
+        ...(patch.paymentMethod !== undefined ? { paymentMethod: patch.paymentMethod } : {}),
       });
     }
   }

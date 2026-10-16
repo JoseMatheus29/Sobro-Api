@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, gte, isNull, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, isNull, lt, ne, sql } from 'drizzle-orm';
 
 import type { Executor } from '../db/client.js';
 import { categories, categoryBudgets, monthlyBudgets, transactions } from '../db/schema.js';
 import { monthRange } from '../shared/month.js';
+import { INVOICE_CATEGORY_ID } from '../shared/payment.js';
 import { assertCategory } from './categories.js';
 
 export interface MonthTotals {
@@ -21,7 +22,7 @@ export async function monthlyTotals(db: Executor, userId: string): Promise<Month
       expense: sql<number>`coalesce(sum(case when ${transactions.type} = 'expense' then abs(${transactions.amount}) else 0 end), 0)`.mapWith(Number),
     })
     .from(transactions)
-    .where(and(eq(transactions.userId, userId), isNull(transactions.transferId)))
+    .where(and(eq(transactions.userId, userId), isNull(transactions.transferId), ne(transactions.categoryId, INVOICE_CATEGORY_ID)))
     .groupBy(month)
     .orderBy(desc(month));
   return rows;
@@ -56,6 +57,7 @@ export async function categoryTotals(db: Executor, userId: string, month: string
         eq(transactions.userId, userId),
         eq(transactions.type, 'expense'),
         isNull(transactions.transferId),
+        ne(transactions.categoryId, INVOICE_CATEGORY_ID),
         gte(transactions.occurredAt, start),
         lt(transactions.occurredAt, end)
       )

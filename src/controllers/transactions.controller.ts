@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { Ctx } from '../context.js';
+import { PAYMENT_METHODS } from '../shared/payment.js';
 import { idParam, isoDate, month, optionalText, positiveMoney, requiredText } from '../lib/schemas.js';
 import {
   createTransaction,
@@ -33,6 +34,8 @@ const transactionBody = z.object({
   type: z.enum(['income', 'expense']),
   occurredAt: isoDate,
   repeat: repeat.optional(),
+  // Como a saída foi paga. Sem ele (ou nulo), sai do saldo. Só despesa; 'credit' exige conta com cartão.
+  paymentMethod: z.enum(PAYMENT_METHODS).nullish(),
 });
 
 const transactionPatch = z
@@ -44,6 +47,7 @@ const transactionPatch = z
     amount: positiveMoney,
     type: z.enum(['income', 'expense']),
     occurredAt: isoDate,
+    paymentMethod: z.enum(PAYMENT_METHODS).nullable(),
     applyToNext: z.boolean(),
   })
   .partial();
@@ -53,6 +57,7 @@ const listQuery = z.object({
   cardId: z.coerce.number().int().positive().optional(),
   categoryId: z.string().max(40).optional(),
   type: z.enum(['income', 'expense']).optional(),
+  paymentMethod: z.enum(PAYMENT_METHODS).optional(),
   q: z.string().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(200),
   cursor: z.string().max(200).optional(),

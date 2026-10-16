@@ -3,6 +3,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import type { Db, Executor } from '../db/client.js';
 import { cards, categories, recurrences, transactions } from '../db/schema.js';
 import { notFound } from '../lib/errors.js';
+import type { PaymentMethod } from '../shared/payment.js';
 import { calendarNoon, monthKey } from '../shared/month.js';
 import { dueOccurrences, type RecurrenceRule } from '../shared/recurrence.js';
 
@@ -18,6 +19,8 @@ export interface RecurrenceRecord extends RecurrenceRule {
   description: string | null;
   /** Magnitude positiva de uma ocorrência. */
   amount: number;
+  /** 'pix', 'debit', 'credit' ou null (sai do saldo). Cada ocorrência gerada herda. */
+  paymentMethod: string | null;
 }
 
 const recurrenceColumns = {
@@ -37,6 +40,7 @@ const recurrenceColumns = {
   total: recurrences.total,
   endMonth: recurrences.endMonth,
   generatedUntil: recurrences.generatedUntil,
+  paymentMethod: recurrences.paymentMethod,
 };
 
 function selectRecurrences(db: Executor) {
@@ -71,6 +75,7 @@ export async function createRecurrence(
     startMonth: string;
     firstInstallment: number;
     total: number | null;
+    paymentMethod: PaymentMethod | null;
   }
 ): Promise<number> {
   const [row] = await tx
@@ -85,7 +90,14 @@ export async function updateRecurrence(
   tx: Executor,
   userId: string,
   id: number,
-  patch: Partial<{ cardId: number; categoryId: string; name: string; description: string | null; amount: number }>
+  patch: Partial<{
+    cardId: number;
+    categoryId: string;
+    name: string;
+    description: string | null;
+    amount: number;
+    paymentMethod: PaymentMethod | null;
+  }>
 ): Promise<void> {
   const set = { ...patch, ...(patch.amount !== undefined ? { amount: Math.abs(patch.amount) } : {}) };
   if (Object.keys(set).length === 0) return;
@@ -108,15 +120,16 @@ export async function endRecurrence(tx: Executor, userId: string, id: number): P
 // Último mês do plano ('YYYY-MM'), em SQL: início + (parcelas que faltam depois da primeira).
 const planLastMonth = sql`to_char((${recurrences.startMonth} || '-01')::date + make_interval(months => ${recurrences.total} - ${recurrences.firstInstallment}), 'YYYY-MM')`;
 
-// Só entra quem ainda pode ter algo vencido: gerou até antes do mês atual, não foi encerrada
-// e o plano de parcelas não acabou. Assim a pergunta "há algo vencido?" é barata.
+// Ainda vale: não foi encerrada à mão e o plano de parcelas não acabou.
+export const isActiveRecurrence = and(
+  sql`(${recurrences.endMonth} is null or ${recurrences.generatedUntil} < ${recurrences.endMonth})`,
+  sql`(${recurrences.total} is null or ${recurrences.generatedUntil} < ${planLastMonth})`
+);
+
+// Só entra quem ainda pode ter algo vencido: gerou até antes do mês atual e ainda vale.
+// Assim a pergunta "há algo vencido?" é barata.
 function mightBeDue(userId: string, current: string) {
-  return and(
-    eq(recurrences.userId, userId),
-    sql`${recurrences.generatedUntil} < ${current}`,
-    sql`(${recurrences.endMonth} is null or ${recurrences.generatedUntil} < ${recurrences.endMonth})`,
-    sql`(${recurrences.total} is null or ${recurrences.generatedUntil} < ${planLastMonth})`
-  );
+  return and(eq(recurrences.userId, userId), sql`${recurrences.generatedUntil} < ${current}`, isActiveRecurrence);
 }
 
 // Cria as transações das ocorrências que venceram desde a última chamada. Seguro de repetir: cada
@@ -153,6 +166,7 @@ export async function materializeDue(db: Db, userId: string, timeZone: string, i
           occurredAt: new Date(occurrence.date),
           recurrenceId: r.id,
           installment: r.total !== null ? occurrence.installment : null,
+          paymentMethod: r.paymentMethod,
         }))
       );
       await tx
