@@ -37,7 +37,7 @@ const expense = (cardId: number, categoryId: string, extra: Record<string, unkno
   ...extra,
 });
 
-const CATALOG = ['food', 'health', 'invest', 'leisure', 'other', 'salary', 'shopping', 'transfer', 'transport'];
+const CATALOG = ['food', 'health', 'invest', 'invoice', 'leisure', 'other', 'salary', 'shopping', 'transfer', 'transport'];
 
 describe('listar', () => {
   it('um usuário novo vê só o catálogo, marcado como não personalizado', async () => {
@@ -54,10 +54,10 @@ describe('listar', () => {
     const abelha = await newCategory(me, { name: 'Abelha' });
 
     const list = (await me.get('/categories')).body as { id: string; name: string; custom: boolean }[];
-    expect(list.slice(0, 9).every((c) => !c.custom)).toBe(true);
-    const names = list.slice(0, 9).map((c) => c.name);
+    expect(list.slice(0, 10).every((c) => !c.custom)).toBe(true);
+    const names = list.slice(0, 10).map((c) => c.name);
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b, 'pt-BR')));
-    expect(list.slice(9).map((c) => [c.id, c.name, c.custom])).toEqual([
+    expect(list.slice(10).map((c) => [c.id, c.name, c.custom])).toEqual([
       [zebra.id, 'Zebra', true],
       [abelha.id, 'Abelha', true],
     ]);
@@ -248,6 +248,6 @@ describe('excluir a conta', () => {
     expect((await me.del('/me', { password: PASSWORD })).status).toBe(204);
     expect(await t.db.select().from(categories).where(eq(categories.userId, me.userId))).toEqual([]);
     // O catálogo continua intacto.
-    expect((await t.db.select().from(categories)).filter((c) => c.userId === null)).toHaveLength(9);
+    expect((await t.db.select().from(categories)).filter((c) => c.userId === null)).toHaveLength(10);
   });
 });

@@ -71,6 +71,22 @@
       "value": ""
     },
     {
+      "key": "creditCardId",
+      "value": ""
+    },
+    {
+      "key": "creditTxId",
+      "value": ""
+    },
+    {
+      "key": "invoicePaymentId",
+      "value": ""
+    },
+    {
+      "key": "invoiceMonth",
+      "value": ""
+    },
+    {
       "key": "goalId",
       "value": ""
     },
@@ -522,7 +538,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('Status 200', () => pm.response.to.have.status(200));",
-                  "pm.test('o catálogo (9) vem primeiro, sem as próprias', () => { const c = pm.response.json(); pm.expect(c.length).to.be.at.least(9); pm.expect(c.slice(0, 9).every((x) => x.custom === false)).to.eql(true); });"
+                  "pm.test('o catálogo (10, com a invoice) vem primeiro, sem as próprias', () => { const c = pm.response.json(); pm.expect(c.length).to.be.at.least(10); pm.expect(c.slice(0, 10).every((x) => x.custom === false)).to.eql(true); });"
                 ]
               }
             }
@@ -1400,6 +1416,442 @@
               }
             },
             "description": "Uma transferência não se edita: exclua e crie outra."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cartão de crédito",
+      "description": "O crédito não mexe no saldo: a compra vai para a fatura, e o saldo só cai quando a fatura é paga (uma saída na categoria invoice).",
+      "item": [
+        {
+          "name": "Criar conta com cartão",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const c = pm.response.json();",
+                  "pm.collectionVariables.set('creditCardId', c.id);",
+                  "pm.test('tem cartão e saldo inicial', () => { pm.expect(c.credit).to.eql({ lastDigits: '0001', limit: 6000, closingDay: 3, dueDay: 10 }); pm.expect(c.balance).to.eql(1000); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "cards"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Cartão\",\n  \"color\": \"#820AD1\",\n  \"lightColor\": \"#A04FE0\",\n  \"startingBalance\": 1000,\n  \"credit\": {\n    \"lastDigits\": \"0001\",\n    \"limit\": 6000,\n    \"closingDay\": 3,\n    \"dueDay\": 10\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Uma conta tem cartão quando credit não é nulo. Guarda o id em creditCardId."
+          }
+        },
+        {
+          "name": "Compra no crédito (não mexe no saldo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const t = pm.response.json();",
+                  "pm.collectionVariables.set('creditTxId', t.id);",
+                  "pm.test('é no crédito e a despesa vem negativa', () => { pm.expect(t.paymentMethod).to.eql('credit'); pm.expect(t.amount).to.eql(-300); });",
+                  "pm.sendRequest({ url: pm.variables.replaceIn('{{baseUrl}}/v1/cards/{{creditCardId}}'), method: 'GET', header: { Authorization: 'Bearer ' + pm.collectionVariables.get('accessToken') } }, (err, res) => {",
+                  "  pm.test('o saldo continua 1000', () => pm.expect(res.json().balance).to.eql(1000));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardId\": {{creditCardId}},\n  \"categoryId\": \"shopping\",\n  \"name\": \"Notebook\",\n  \"amount\": 300,\n  \"type\": \"expense\",\n  \"occurredAt\": \"{{today}}\",\n  \"paymentMethod\": \"credit\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "paymentMethod: 'pix', 'debit' ou 'credit' (ou omitido: sai do saldo). Só despesa, e 'credit' exige conta com cartão."
+          }
+        },
+        {
+          "name": "Listar compras no crédito",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('só no crédito', () => { const i = pm.response.json().items; pm.expect(i.length).to.be.at.least(1); pm.expect(i.every((x) => x.paymentMethod === 'credit')).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transactions?paymentMethod=credit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "paymentMethod",
+                  "value": "credit"
+                }
+              ]
+            },
+            "description": "Base para o app calcular a fatura (utils/invoice.ts)."
+          }
+        },
+        {
+          "name": "Crédito em conta sem cartão (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "pm.test('aponta o paymentMethod', () => pm.expect(pm.response.json().error.fields[0].path).to.eql('paymentMethod'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cardId\": {{cardId}},\n  \"categoryId\": \"food\",\n  \"name\": \"x\",\n  \"amount\": 10,\n  \"type\": \"expense\",\n  \"occurredAt\": \"{{today}}\",\n  \"paymentMethod\": \"credit\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Usa a \"Conta Principal\", que não tem cartão."
+          }
+        },
+        {
+          "name": "Pagar a fatura",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A fatura que fecha no mês que vem (AAAA-MM).",
+                  "const d = new Date();",
+                  "d.setUTCMonth(d.getUTCMonth() + 1);",
+                  "pm.collectionVariables.set('invoiceMonth', d.toISOString().slice(0, 7));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const p = pm.response.json();",
+                  "pm.collectionVariables.set('invoicePaymentId', p.id);",
+                  "pm.test('saída na categoria invoice com o mês da fatura', () => { pm.expect(p.categoryId).to.eql('invoice'); pm.expect(p.amount).to.eql(-300); pm.expect(p.paymentMethod).to.eql(null); pm.expect(p.invoiceMonth).to.eql(pm.collectionVariables.get('invoiceMonth')); });",
+                  "pm.sendRequest({ url: pm.variables.replaceIn('{{baseUrl}}/v1/cards/{{creditCardId}}'), method: 'GET', header: { Authorization: 'Bearer ' + pm.collectionVariables.get('accessToken') } }, (err, res) => {",
+                  "  pm.test('o saldo cai quando a fatura é paga', () => pm.expect(res.json().balance).to.eql(700));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/cards/{{creditCardId}}/invoice-payments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "cards",
+                "{{creditCardId}}",
+                "invoice-payments"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"month\": \"{{invoiceMonth}}\",\n  \"amount\": 300,\n  \"occurredAt\": \"{{today}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Uma saída da conta, na categoria invoice: mexe no saldo, mas não é gasto do mês. Aceita Idempotency-Key."
+          }
+        },
+        {
+          "name": "Editar o pagamento da fatura (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('código invoice_payment_not_editable', () => pm.expect(pm.response.json().error.code).to.eql('invoice_payment_not_editable'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transactions/{{invoicePaymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "{{invoicePaymentId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Um pagamento de fatura não se edita: exclua e registre outro."
+          }
+        },
+        {
+          "name": "Tirar o cartão com compras no crédito (409)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 409', () => pm.response.to.have.status(409));",
+                  "pm.test('código credit_in_use', () => pm.expect(pm.response.json().error.code).to.eql('credit_in_use'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/cards/{{creditCardId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "cards",
+                "{{creditCardId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credit\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Excluir o pagamento da fatura",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transactions/{{invoicePaymentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "{{invoicePaymentId}}"
+              ]
+            },
+            "description": "A fatura volta a ficar em aberto e o saldo volta."
+          }
+        },
+        {
+          "name": "Excluir a compra no crédito",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transactions/{{creditTxId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transactions",
+                "{{creditTxId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Tirar o cartão da conta",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('a conta voltou a não ter cartão', () => pm.expect(pm.response.json().credit).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/cards/{{creditCardId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "cards",
+                "{{creditCardId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"credit\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         }
       ]

@@ -4,6 +4,8 @@ import type { Db, Executor, Tx } from '../db/client.js';
 import { cards, recurrences, transactions } from '../db/schema.js';
 import { conflict, notFound } from '../lib/errors.js';
 import { runIdempotent, type IdempotencyKey, type Idempotent } from '../lib/idempotency.js';
+import { round2 } from '../lib/money.js';
+import { isActiveRecurrence } from './recurrences.js';
 
 export interface CardRecord {
   id: number;
@@ -11,15 +13,32 @@ export interface CardRecord {
   number: string;
   color: string;
   lightColor: string;
-  /** Saldo atual: inicial + soma das transações. Sempre calculado, nunca gravado. */
+  /** Saldo atual: inicial + soma das transações que saem do saldo (as compras no crédito não entram). Sempre calculado. */
   balance: number;
   startingBalance: number;
+  /** O cartão de crédito da conta, ou null numa conta sem cartão (sempre presente na resposta). */
+  credit: CreditRecord | null;
+}
+
+export interface CreditRecord {
+  lastDigits: string;
+  limit: number | null;
+  closingDay: number;
+  dueDay: number;
+}
+
+export interface CreditInput {
+  lastDigits: string;
+  limit: number | null;
+  closingDay: number;
+  dueDay: number;
 }
 
 // O saldo atual sai da mesma consulta, para nunca divergir das transações. Os nomes da subconsulta vão
 // escritos por extenso: numa consulta de uma tabela só, o Drizzle omite o prefixo das colunas, e `id`
 // sem prefixo seria lido como o da própria subconsulta.
-const currentBalance = sql<number>`${cards.balance} + coalesce((select sum(t.amount) from transactions t where t.card_id = cards.id), 0)`.mapWith(Number);
+// Uma compra no crédito não mexe no saldo: ela entra na fatura, e o saldo só cai quando a fatura é paga.
+const currentBalance = sql<number>`${cards.balance} + coalesce((select sum(t.amount) from transactions t where t.card_id = cards.id and t.payment_method is distinct from 'credit'), 0)`.mapWith(Number);
 
 const cardColumns = {
   id: cards.id,
@@ -29,10 +48,37 @@ const cardColumns = {
   lightColor: cards.lightColor,
   startingBalance: cards.balance,
   balance: currentBalance,
+  creditLastDigits: cards.creditLastDigits,
+  creditLimit: cards.creditLimit,
+  closingDay: cards.closingDay,
+  dueDay: cards.dueDay,
 };
 
+type CardRow = {
+  id: number;
+  name: string;
+  number: string;
+  color: string;
+  lightColor: string;
+  startingBalance: number;
+  balance: number;
+  creditLastDigits: string | null;
+  creditLimit: number | null;
+  closingDay: number | null;
+  dueDay: number | null;
+};
+
+// Uma conta tem cartão quando closing_day não é nulo.
+function mapCard(row: CardRow): CardRecord {
+  const { creditLastDigits, creditLimit, closingDay, dueDay, ...card } = row;
+  const credit =
+    closingDay !== null && dueDay !== null ? { lastDigits: creditLastDigits ?? '', limit: creditLimit, closingDay, dueDay } : null;
+  return { ...card, credit };
+}
+
 export async function listCards(db: Executor, userId: string): Promise<CardRecord[]> {
-  return db.select(cardColumns).from(cards).where(eq(cards.userId, userId)).orderBy(asc(cards.id));
+  const rows = await db.select(cardColumns).from(cards).where(eq(cards.userId, userId)).orderBy(asc(cards.id));
+  return rows.map(mapCard);
 }
 
 export async function getCard(db: Executor, userId: string, id: number): Promise<CardRecord> {
@@ -41,7 +87,7 @@ export async function getCard(db: Executor, userId: string, id: number): Promise
     .from(cards)
     .where(and(eq(cards.userId, userId), eq(cards.id, id)));
   if (!row) throw notFound('Conta não encontrada.');
-  return row;
+  return mapCard(row);
 }
 
 export interface CardInput {
@@ -50,6 +96,17 @@ export interface CardInput {
   color: string;
   lightColor: string;
   startingBalance: number;
+  credit?: CreditInput | null | undefined;
+}
+
+// As colunas do cartão de crédito: todas nulas quando a conta não tem cartão.
+function creditColumns(credit: CreditInput | null | undefined) {
+  return {
+    creditLastDigits: credit ? credit.lastDigits : null,
+    creditLimit: credit && credit.limit !== null ? round2(credit.limit) : null,
+    closingDay: credit ? credit.closingDay : null,
+    dueDay: credit ? credit.dueDay : null,
+  };
 }
 
 // Com `Idempotency-Key`, repetir a chave devolve a conta já criada em vez de criar outra.
@@ -67,26 +124,58 @@ async function insertCard(db: Executor, userId: string, input: CardInput): Promi
       color: input.color,
       lightColor: input.lightColor,
       balance: input.startingBalance,
+      ...creditColumns(input.credit),
     })
     .returning({ id: cards.id });
   return getCard(db, userId, row!.id);
 }
 
-export async function updateCard(
-  db: Executor,
-  userId: string,
-  id: number,
-  patch: Partial<{ name: string; number: string; color: string; lightColor: string }>
-): Promise<CardRecord> {
-  if (Object.keys(patch).length > 0) {
-    const updated = await db
-      .update(cards)
-      .set(patch)
-      .where(and(eq(cards.userId, userId), eq(cards.id, id)))
-      .returning({ id: cards.id });
-    if (updated.length === 0) throw notFound('Conta não encontrada.');
+export type CardPatch = Partial<{ name: string; number: string; color: string; lightColor: string }> & {
+  /** O cartão inteiro, ou null para tirá-lo da conta. Mudar os dias vale para todas as faturas, também as passadas. */
+  credit?: CreditInput | null | undefined;
+};
+
+// Tirar o cartão de uma conta com compras no crédito (ou recorrências no crédito ainda valendo) é recusado.
+async function assertNoCreditUse(tx: Tx, userId: string, cardId: number): Promise<void> {
+  const [purchases] = await tx
+    .select({ n: count() })
+    .from(transactions)
+    .where(and(eq(transactions.userId, userId), eq(transactions.cardId, cardId), eq(transactions.paymentMethod, 'credit')));
+  const [plans] = await tx
+    .select({ n: count() })
+    .from(recurrences)
+    .where(and(eq(recurrences.userId, userId), eq(recurrences.cardId, cardId), eq(recurrences.paymentMethod, 'credit'), isActiveRecurrence));
+  if ((purchases?.n ?? 0) + (plans?.n ?? 0) > 0) {
+    throw conflict(
+      'credit_in_use',
+      'Esta conta tem compras no cartão de crédito. Passe as compras para outra forma de pagamento ou exclua-as antes de tirar o cartão.'
+    );
   }
-  return getCard(db, userId, id);
+}
+
+export function updateCard(db: Db, userId: string, id: number, patch: CardPatch): Promise<CardRecord> {
+  return db.transaction(async (tx) => {
+    // Trava a conta: uma compra no crédito gravada ao mesmo tempo espera esta troca terminar.
+    const [current] = await tx
+      .select({ closingDay: cards.closingDay })
+      .from(cards)
+      .where(and(eq(cards.userId, userId), eq(cards.id, id)))
+      .for('update');
+    if (!current) throw notFound('Conta não encontrada.');
+
+    const { credit, ...fields } = patch;
+    const set: Partial<typeof cards.$inferInsert> = { ...fields };
+    if (credit === null) {
+      if (current.closingDay !== null) await assertNoCreditUse(tx, userId, id);
+      Object.assign(set, creditColumns(null));
+    } else if (credit !== undefined) {
+      Object.assign(set, creditColumns(credit));
+    }
+    if (Object.keys(set).length > 0) {
+      await tx.update(cards).set(set).where(and(eq(cards.userId, userId), eq(cards.id, id)));
+    }
+    return getCard(tx, userId, id);
+  });
 }
 
 // As transações da conta e a outra perna de toda transferência de que ela participou: uma transferência

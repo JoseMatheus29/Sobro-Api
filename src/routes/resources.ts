@@ -25,6 +25,7 @@ export function cardsRoutes(app: FastifyInstance, c: Controller<typeof createCar
   app.patch('/cards/:id', c.update);
   app.get('/cards/:id/usage', c.usage);
   app.delete('/cards/:id', c.remove);
+  app.post('/cards/:id/invoice-payments', c.payInvoice);
 }
 
 export function transactionsRoutes(app: FastifyInstance, c: Controller<typeof createTransactionsController>) {

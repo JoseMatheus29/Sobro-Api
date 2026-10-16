@@ -77,7 +77,7 @@ describe('orçamentos', () => {
     const me = await signup(t.app);
     const categories = (await me.get('/categories')).body;
     expect(categories.map((c: { id: string }) => c.id).sort()).toEqual(
-      ['food', 'health', 'invest', 'leisure', 'other', 'salary', 'shopping', 'transfer', 'transport']
+      ['food', 'health', 'invest', 'invoice', 'leisure', 'other', 'salary', 'shopping', 'transfer', 'transport']
     );
   });
 });
@@ -106,7 +106,7 @@ describe('backup', () => {
     await populate(me);
     const exported = (await me.get('/backup')).body;
 
-    expect(exported).toMatchObject({ app: 'sobro', format: 1, schemaVersion: 8 });
+    expect(exported).toMatchObject({ app: 'sobro', format: 1, schemaVersion: 9 });
     expect(Object.keys(exported.data).sort()).toEqual(
       ['cards', 'categories', 'category_budgets', 'goal_entries', 'goals', 'monthly_budgets', 'profile', 'recurrences', 'transactions']
     );
@@ -236,7 +236,7 @@ describe('backup', () => {
   it.each([
     ['não é do Sobrô', (b: any) => (b.app = 'outro')],
     ['formato mais novo', (b: any) => (b.format = 2)],
-    ['esquema mais novo', (b: any) => (b.schemaVersion = 9)],
+    ['esquema mais novo', (b: any) => (b.schemaVersion = 10)],
     ['conta que não existe', (b: any) => (b.data.transactions[0].card_id = 99)],
     ['categoria que não existe', (b: any) => (b.data.transactions[0].category_id = 'nada')],
     ['tipo inválido', (b: any) => (b.data.transactions[0].type = 'x')],
@@ -343,7 +343,7 @@ describe('backup', () => {
 
       // O que a API exporta entra de volta sem reclamar, em qualquer versão de origem.
       const exported = (await me.get('/backup')).body;
-      expect(exported.schemaVersion).toBe(8);
+      expect(exported.schemaVersion).toBe(9);
       expect((await me.put('/backup', exported)).status).toBe(204);
       expect((await me.get('/goals')).body.map((g: { saved: number }) => g.saved)).toEqual(goalsNow.map((g: { saved: number }) => g.saved));
     });

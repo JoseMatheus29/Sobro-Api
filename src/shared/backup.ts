@@ -1,6 +1,8 @@
 // O formato de backup do app (utils/backup.ts e backup-type.ts): um JSON com as tabelas do banco do app
 // (linhas em snake_case). A API lê e escreve o mesmo formato, para o backup da v1 entrar pela v2.
 
+import { INVOICE_CATEGORY_ID, PAYMENT_METHODS } from './payment.js';
+
 export type BackupTableName =
   | 'categories'
   | 'cards'
@@ -51,8 +53,8 @@ export const BACKUP_FORMAT = 1;
 /** As categorias que o usuário cria têm id `custom-...`; só elas viajam no backup (o catálogo vale o da API). */
 export const CUSTOM_CATEGORY_PREFIX = 'custom-';
 
-/** A versão do esquema do app (migração v8) que esta API entende. */
-export const BACKUP_SCHEMA_VERSION = 8;
+/** A versão do esquema do app (migração v9) que esta API entende. */
+export const BACKUP_SCHEMA_VERSION = 9;
 
 const text = (name: string, extra: Partial<ColumnSpec> = {}): ColumnSpec => ({ name, kind: 'text', required: true, ...extra });
 const number = (name: string, extra: Partial<ColumnSpec> = {}): ColumnSpec => ({ name, kind: 'number', required: true, ...extra });
@@ -63,7 +65,13 @@ export const BACKUP_TABLES: TableSpec[] = [
   { name: 'categories', columns: [text('id'), text('name'), text('icon'), text('color'), text('bg')] },
   {
     name: 'cards',
-    columns: [integer('id'), text('name'), text('number'), text('color'), text('light_color'), number('balance', { required: false, fallback: 0 })],
+    columns: [integer('id'), text('name'), text('number'), text('color'), text('light_color'),
+      number('balance', { required: false, fallback: 0 }),
+      text('credit_last_digits', { required: false, nullable: true, fallback: null }),
+      number('credit_limit', { required: false, nullable: true, fallback: null }),
+      integer('closing_day', { required: false, nullable: true, fallback: null }),
+      integer('due_day', { required: false, nullable: true, fallback: null }),
+    ],
   },
   {
     name: 'recurrences',
@@ -80,6 +88,7 @@ export const BACKUP_TABLES: TableSpec[] = [
       integer('total', { required: false, nullable: true, fallback: null }),
       text('end_month', { required: false, nullable: true, fallback: null }),
       text('generated_until'),
+      text('payment_method', { required: false, nullable: true, fallback: null }),
     ],
   },
   {
@@ -97,6 +106,8 @@ export const BACKUP_TABLES: TableSpec[] = [
       integer('recurrence_id', { required: false, nullable: true, fallback: null }),
       integer('installment', { required: false, nullable: true, fallback: null }),
       integer('transfer_id', { required: false, nullable: true, fallback: null }),
+      text('payment_method', { required: false, nullable: true, fallback: null }),
+      text('invoice_month', { required: false, nullable: true, fallback: null }),
     ],
   },
   {
@@ -142,6 +153,11 @@ export const BACKUP_REASONS = {
   duplicateId: (table: string) => `"${table}" tem ids repetidos.`,
   badGoal: (index: number) => `Caixinha ${index + 1}: o valor da meta precisa ser maior que zero.`,
   badGoalEntry: (index: number) => `Movimentação ${index + 1} de caixinha: o valor não pode ser zero.`,
+  badCreditCard: (index: number) => `Conta ${index + 1}: o cartão de crédito precisa ter dia de fechamento e de vencimento de 1 a 31, e o limite não pode ser negativo.`,
+  badPaymentMethod: (table: string, index: number) =>
+    `Linha ${index + 1} de "${table}": a forma de pagamento é inválida (só despesa tem, e crédito exige uma conta com cartão).`,
+  badInvoice: (index: number) =>
+    `Transação ${index + 1}: um pagamento de fatura precisa de um mês (AAAA-MM) e de valor negativo, e só ele leva mês de fatura.`,
   negativeGoal: (index: number) => `Caixinha ${index + 1}: as movimentações somam menos que zero.`,
 };
 
@@ -272,6 +288,48 @@ export function validateBackup(raw: unknown, catalogIds: ReadonlySet<string>): B
     const index = data[table].findIndex((r) => columns.some((c) => !MONTH_FORMAT.test(String(r[c]))));
     if (index >= 0) return { ok: false, reason: BACKUP_REASONS.badMonth(table, index) };
   }
+
+  // Cartão de crédito e forma de pagamento (v9). Arquivos antigos não trazem os campos: eles entram nulos.
+  const badCard = data.cards.findIndex((c) => {
+    const closing = c.closing_day as number | null;
+    const due = c.due_day as number | null;
+    const limit = c.credit_limit as number | null;
+    const inRange = (day: number | null) => day !== null && day >= 1 && day <= 31;
+    const days = (closing === null && due === null) || (inRange(closing) && inRange(due));
+    return !days || (limit !== null && limit < 0);
+  });
+  if (badCard >= 0) return { ok: false, reason: BACKUP_REASONS.badCreditCard(badCard) };
+
+  const cardsWithCredit = new Set(data.cards.filter((c) => c.closing_day !== null).map((c) => c.id));
+  const methods = new Set<unknown>(PAYMENT_METHODS);
+
+  const badTransactionMethod = data.transactions.findIndex((r) => {
+    const method = r.payment_method;
+    if (method === null) return false;
+    if (!methods.has(method) || r.type !== 'expense') return true;
+    if (r.category_id === 'transfer' || r.category_id === INVOICE_CATEGORY_ID) return true;
+    return method === 'credit' && !cardsWithCredit.has(r.card_id);
+  });
+  if (badTransactionMethod >= 0) {
+    return { ok: false, reason: BACKUP_REASONS.badPaymentMethod('transactions', badTransactionMethod) };
+  }
+
+  const badRecurrenceMethod = data.recurrences.findIndex((r) => {
+    const method = r.payment_method;
+    if (method === null) return false;
+    return !methods.has(method) || (method === 'credit' && !cardsWithCredit.has(r.card_id));
+  });
+  if (badRecurrenceMethod >= 0) {
+    return { ok: false, reason: BACKUP_REASONS.badPaymentMethod('recurrences', badRecurrenceMethod) };
+  }
+
+  // Pagamento de fatura (categoria invoice): mês da fatura e valor negativo. Nas demais, sem mês de fatura.
+  const badInvoice = data.transactions.findIndex((r) =>
+    r.category_id === INVOICE_CATEGORY_ID
+      ? r.invoice_month === null || !MONTH_FORMAT.test(String(r.invoice_month)) || r.type !== 'expense' || (r.amount as number) >= 0
+      : r.invoice_month !== null
+  );
+  if (badInvoice >= 0) return { ok: false, reason: BACKUP_REASONS.badInvoice(badInvoice) };
 
   // Caixinhas: meta positiva, prazo no formato AAAA-MM, movimentações diferentes de zero e saldo nunca negativo.
   const badGoal = data.goals.findIndex((r) => (r.target_amount as number) <= 0);

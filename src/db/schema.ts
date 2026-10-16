@@ -68,10 +68,22 @@ export const cards = pgTable(
     number: text('number').notNull().default(''),
     color: text('color').notNull(),
     lightColor: text('light_color').notNull(),
-    // Saldo inicial. O saldo atual é sempre calculado (inicial + soma das transações).
+    // Saldo inicial. O saldo atual é sempre calculado (inicial + soma das transações que saem do saldo).
     balance: money('balance').notNull().default(0),
+    // Cartão de crédito da conta: a conta tem cartão quando closing_day não é nulo. A fatura não é gravada:
+    // é calculada a partir das compras no crédito e dos pagamentos.
+    creditLastDigits: text('credit_last_digits'),
+    creditLimit: money('credit_limit'),
+    closingDay: smallint('closing_day'),
+    dueDay: smallint('due_day'),
   },
-  (t) => [index('cards_user_idx').on(t.userId)]
+  (t) => [
+    index('cards_user_idx').on(t.userId),
+    check(
+      'cards_credit_days_check',
+      sql`(${t.closingDay} IS NULL AND ${t.dueDay} IS NULL) OR (${t.closingDay} BETWEEN 1 AND 31 AND ${t.dueDay} BETWEEN 1 AND 31)`
+    ),
+  ]
 );
 
 export const recurrences = pgTable(
@@ -97,11 +109,14 @@ export const recurrences = pgTable(
     total: integer('total'),
     endMonth: text('end_month'),
     generatedUntil: text('generated_until').notNull(),
+    // Como as ocorrências são pagas: 'pix', 'debit', 'credit' ou nulo (sai do saldo, como sempre foi).
+    paymentMethod: text('payment_method'),
   },
   (t) => [
     index('recurrences_user_generated_idx').on(t.userId, t.generatedUntil),
     index('recurrences_card_idx').on(t.userId, t.cardId),
     check('recurrences_amount_positive', sql`${t.amount} > 0`),
+    check('recurrences_payment_method_valid', sql`${t.paymentMethod} IN ('pix', 'debit', 'credit')`),
     check('recurrences_day_range', sql`${t.day} BETWEEN 1 AND 31`),
     check('recurrences_total_valid', sql`${t.total} IS NULL OR ${t.total} >= 1`),
     check(
@@ -136,12 +151,18 @@ export const transactions = pgTable(
     installment: integer('installment'),
     // Id da primeira perna da transferência; as duas pernas compartilham o valor.
     transferId: integer('transfer_id'),
+    // Como a saída foi paga: 'pix', 'debit', 'credit' (entra na fatura e não mexe no saldo) ou nulo (sai do saldo).
+    paymentMethod: text('payment_method'),
+    // 'AAAA-MM' da fatura que este lançamento paga; só nos pagamentos de fatura (categoria `invoice`).
+    invoiceMonth: text('invoice_month'),
   },
   (t) => [
     index('transactions_user_occurred_idx').on(t.userId, t.occurredAt),
     index('transactions_user_card_idx').on(t.userId, t.cardId),
     index('transactions_user_recurrence_idx').on(t.userId, t.recurrenceId),
     index('transactions_user_transfer_idx').on(t.userId, t.transferId),
+    index('transactions_user_card_method_idx').on(t.userId, t.cardId, t.paymentMethod),
+    check('transactions_payment_method_valid', sql`${t.paymentMethod} IN ('pix', 'debit', 'credit')`),
     check('transactions_type_valid', sql`${t.type} IN ('income', 'expense')`),
     check(
       'transactions_amount_matches_type',

@@ -88,4 +88,5 @@ Com mais de um dyno web, a migração continua só na release phase; tire `runMi
 - `Idempotency-Key` (UUID) nos `POST` que criam algo: repetir a mesma chave devolve a resposta original.
 - Caixinhas: o `amount` de `POST /goals/:id/entries` é **com sinal** (positivo guarda, negativo retira), ao contrário das transações. `saved` vem calculado (soma das movimentações) e retirar mais do que há responde 409 `goal_insufficient`.
 - Categorias: `GET /categories` traz o catálogo e as categorias do usuário (campo `custom`). Só as próprias se editam e se excluem; excluir uma em uso responde 409 `category_in_use`.
+- Cartão de crédito: uma conta tem cartão quando `credit` não é nulo. Uma saída `paymentMethod: "credit"` **não mexe no saldo** (vai para a fatura); pagar a fatura (`POST /cards/:id/invoice-payments`) é uma saída da conta na categoria oculta `invoice`, que mexe no saldo mas não é gasto do mês. A fatura não é guardada: o app a calcula.
 - `X-App-Version`: com `MIN_APP_VERSION` definido, versões menores recebem 426.

@@ -20,7 +20,7 @@ Guia para quem escreve o cliente do app. Complementa o [api-requisitos-e-hospeda
 | **Formato** | JSON nos dois sentidos. Envie `Content-Type: application/json`. |
 | **Autenticação** | `Authorization: Bearer <accessToken>` em tudo, **exceto** `/health`, `/ready` e `/v1/auth/*`. |
 | **Versão do app** | Envie `X-App-Version: 1.2.0` em **toda** requisição. Se a API exigir uma versão mínima e a sua for menor, responde **426** `upgrade_required`: mostre "Atualize o app". |
-| **Idempotência** | Nos `POST` que **criam** algo (`/cards`, `/transactions`, `/transfers`, `/goals`, `/goals/:id/entries`) envie `Idempotency-Key: <uuid>`. Detalhes na [seção 2.5](#25-tentar-de-novo-sem-duplicar-idempotency-key). |
+| **Idempotência** | Nos `POST` que **criam** algo (`/cards`, `/transactions`, `/transfers`, `/cards/:id/invoice-payments`, `/goals`, `/goals/:id/entries`) envie `Idempotency-Key: <uuid>`. Detalhes na [seção 2.5](#25-tentar-de-novo-sem-duplicar-idempotency-key). |
 | **Dinheiro** | Números JSON com até 2 casas (`120.5`). Veja a [seção 2.6](#26-dinheiro-e-datas) para o sinal. |
 | **Datas** | `occurredAt` em ISO 8601 com `Z` (ex.: `2026-10-05T12:00:00.000Z`). Meses são texto `AAAA-MM`. |
 | **Ids** | Inteiros (`id: 12`). O id do usuário é um UUID. |
@@ -104,7 +104,7 @@ Detalhes: a chave vale **24 horas**, por usuário. Tem de ter 8 a 128 caracteres
 
 | Onde | O que enviar | O que volta |
 | --- | --- | --- |
-| Transações, transferências, recorrências | `amount` **positivo** (magnitude). O tipo (`income`/`expense`) define o sinal | transação com sinal: despesa **negativa**, receita **positiva** |
+| Transações, transferências, recorrências, **pagamentos de fatura** | `amount` **positivo** (magnitude). O tipo (`income`/`expense`) define o sinal | transação com sinal: despesa **negativa**, receita **positiva** |
 | **Movimentações de caixinha** | `amount` **com sinal**: positivo guarda, negativo retira | com sinal |
 | Orçamentos e metas | positivo | positivo |
 
@@ -216,7 +216,7 @@ Cria o usuário, o perfil e a conta padrão **"Conta Principal"**.
 
 ### 3.4 Categorias
 
-O **catálogo** (global, igual para todos, somente leitura) **mais as categorias que o usuário criou**. Ids do catálogo: `food`, `transport`, `leisure`, `health`, `shopping`, `salary`, `invest`, `transfer`, `other`. As do usuário têm id `custom-<32 caracteres>`, gerado pelo servidor. A categoria `transfer` é **só das transferências**: não use em transação comum.
+O **catálogo** (global, igual para todos, somente leitura) **mais as categorias que o usuário criou**. Ids do catálogo: `food`, `transport`, `leisure`, `health`, `shopping`, `salary`, `invest`, `transfer`, `other`. As do usuário têm id `custom-<32 caracteres>`, gerado pelo servidor. A categoria `transfer` é **só das transferências** e a `invoice` ("Fatura do cartão") é **só dos pagamentos de fatura**: não use nenhuma das duas em transação comum (`400`). O app deve **escondê-las** das listas de escolha.
 
 **Objeto categoria:**
 ```json
@@ -235,21 +235,27 @@ O **catálogo** (global, igual para todos, somente leitura) **mais as categorias
 
 ### 3.5 Contas (`cards`)
 
-No app a "conta" é um lugar onde está o dinheiro (banco, cartão, carteira). O saldo atual é **sempre calculado**: saldo inicial + soma das transações.
+No app a "conta" é um lugar onde está o dinheiro (banco, cartão, carteira). O saldo atual é **sempre calculado**: saldo inicial + soma das transações **que saem do saldo**. As compras no crédito (`paymentMethod: "credit"`) **não entram**: vão para a fatura, e o saldo só cai quando a fatura é paga.
 
 **Objeto conta:**
 ```json
-{ "id": 3, "name": "Nubank", "number": "1234", "color": "#820AD1", "lightColor": "#A04FE0", "balance": 1850.5, "startingBalance": 500 }
+{ "id": 3, "name": "Nubank", "number": "1234", "color": "#820AD1", "lightColor": "#A04FE0", "balance": 960.63, "startingBalance": 500,
+  "credit": { "lastDigits": "0001", "limit": 6000, "closingDay": 3, "dueDay": 10 } }
 ```
 
 | Rota | Corpo | Resposta | Observações |
 | --- | --- | --- | --- |
 | `GET /v1/cards` | — | `200 [conta]` ordenadas por id | Gera antes as recorrências vencidas, então o saldo já sai certo. |
-| `POST /v1/cards` | `{ name (≤60), number? (≤8, padrão ""), color, lightColor, startingBalance? (padrão 0, pode ser negativo) }` | `201 conta` | `color`/`lightColor` são hexadecimais (`#3161B2`). Aceita `Idempotency-Key`. |
+| `POST /v1/cards` | `{ name (≤60), number? (≤8, padrão ""), color, lightColor, startingBalance? (padrão 0, pode ser negativo), credit? }` | `201 conta` | `color`/`lightColor` são hexadecimais (`#3161B2`). `credit` é `{ lastDigits? (até 4 dígitos, padrão ""), limit? (≥ 0 ou null), closingDay (1 a 31), dueDay (1 a 31) }`. Aceita `Idempotency-Key`. |
 | `GET /v1/cards/:id` | — | `200 conta` | `404` se não for sua. |
-| `PATCH /v1/cards/:id` | `{ name?, number?, color?, lightColor? }` | `200 conta` | **Não** muda o saldo inicial. |
+| `PATCH /v1/cards/:id` | `{ name?, number?, color?, lightColor?, credit? }` | `200 conta` | **Não** muda o saldo inicial. `credit` com os mesmos campos liga ou troca o cartão; `credit: null` o tira (`409` `credit_in_use` se a conta tem compras no crédito ou recorrências no crédito ainda valendo). Mudar `closingDay`/`dueDay` vale para **todas** as faturas, também as passadas. |
 | `GET /v1/cards/:id/usage` | — | `200 { "transactions": 12, "recurrences": 1 }` | Use para a confirmação de excluir: é o que vai junto. |
 | `DELETE /v1/cards/:id` | — | `204` | Apaga as transações e recorrências da conta **e a outra perna** das transferências em que ela participou. `409` `last_card` se for a última conta. |
+| `POST /v1/cards/:id/invoice-payments` | `{ month, amount, occurredAt }` | `201 transação` | Paga (parte de) uma fatura com o saldo **desta** conta. Ver abaixo. Aceita `Idempotency-Key`. |
+
+**Pagar a fatura.** `month` é a **chave da fatura** (`AAAA-MM`, o mês em que ela fecha); `amount` é positivo; `occurredAt` é o dia do pagamento, ao meio-dia UTC (como as transações). A resposta é a transação criada: despesa na conta, `categoryId: "invoice"`, `name: "Fatura Nubank nov/2026"`, `amount` negativo, `paymentMethod: null`, `invoiceMonth: "2026-11"`. Mexe no saldo, mas **não é gasto do mês**. O servidor **não** limita o valor ao total da fatura (o app limita na tela); pagar a mais fica registrado. Para desfazer, `DELETE /v1/transactions/:id` (a fatura volta a ficar em aberto). Erros: `404` conta que não é sua · `400` `validation_failed` (conta sem cartão, `month` inválido, valor zero ou negativo).
+
+**A fatura não é guardada: o app a calcula** (`utils/invoice.ts`) a partir das compras no crédito (`GET /transactions?paymentMethod=credit`) e dos pagamentos (`invoiceMonth`). Com `C` o dia de fechamento e `D` o de vencimento: uma compra do dia `d` entra na fatura do mês de `d` se `dia(d) <= C`, senão na do mês seguinte (dias 29 a 31 num mês mais curto valem o último dia); o vencimento é o dia `D` do mês da fatura se `D > C`, ou do mês seguinte se `D <= C`. Exemplo (`C = 3`, `D = 10`): compra em 07/10 entra na fatura `2026-11` (04/10 a 03/11), que vence em 10/11.
 
 ### 3.6 Transações
 
@@ -262,12 +268,15 @@ No app a "conta" é um lugar onde está o dinheiro (banco, cartão, carteira). O
   "amount": -120.5, "type": "expense",
   "occurredAt": "2026-10-05T12:00:00.000Z", "createdAt": "2026-10-05T18:02:11.000Z",
   "recurrence": { "id": 7, "installment": 2, "total": 10 },
-  "transferId": null
+  "transferId": null,
+  "paymentMethod": "credit", "invoiceMonth": null
 }
 ```
 - `amount` **com sinal** (despesa negativa, receita positiva).
 - `recurrence` é `null` numa transação comum. Numa recorrência mensal sem fim, `installment` e `total` são `null`.
 - `transferId` só vem preenchido nas duas pernas de uma transferência.
+- `paymentMethod`: `"pix"`, `"debit"`, `"credit"` ou `null` (as antigas, receitas, transferências e pagamentos de fatura: saem do saldo). Uma saída no **crédito não mexe no saldo** da conta.
+- `invoiceMonth` (`AAAA-MM`) só vem nos **pagamentos de fatura** (categoria `invoice`); `null` nas demais.
 
 #### `GET /v1/transactions` — listar
 Do mais novo ao mais antigo (`occurredAt` e `id` decrescentes). Gera antes as recorrências vencidas.
@@ -277,6 +286,7 @@ Do mais novo ao mais antigo (`occurredAt` e `id` decrescentes). Gera antes as re
 | `month=2026-10` | Só transações desse mês. **Sem `month`, busca em qualquer mês.** |
 | `cardId=3` | Só dessa conta |
 | `categoryId=food` | Só dessa categoria |
+| `paymentMethod=credit` | Só as pagas dessa forma (`pix`, `debit` ou `credit`) |
 | `type=income\|expense` | Só receitas ou só despesas |
 | `q=pao queijo` | Busca de texto, até 100 caracteres. Ignora acento e caixa. **Cada palavra** precisa estar no nome, descrição, categoria ou conta |
 | `limit=200` | De 1 a 500 (padrão 200) |
@@ -292,7 +302,8 @@ Do mais novo ao mais antigo (`occurredAt` e `id` decrescentes). Gera antes as re
 {
   "cardId": 3, "categoryId": "food", "name": "Mercado", "description": "opcional",
   "amount": 120.5, "type": "expense", "occurredAt": "2026-10-05T12:00:00.000Z",
-  "repeat": { "mode": "monthly" }
+  "repeat": { "mode": "monthly" },
+  "paymentMethod": "credit"
 }
 ```
 - `name` até 100, `description` até 500 (vazio vira `null`), `amount` **positivo**, `type` `income` ou `expense`.
@@ -300,18 +311,20 @@ Do mais novo ao mais antigo (`occurredAt` e `id` decrescentes). Gera antes as re
   - `{ "mode": "monthly" }` — repete todo mês, sem fim.
   - `{ "mode": "installments", "total": 10, "current": 1 }` — plano de parcelas. `total` de 2 a 99; `current` (a parcela que esta é) de 1 até `total`, padrão 1.
   - A transação criada é a **primeira ocorrência**; as seguintes são geradas pelo servidor quando vencem (e aparecem na previsão pelo `GET /recurrences`). O dia do mês da recorrência é o dia de `occurredAt`.
+- **`paymentMethod` (opcional):** `"pix"`, `"debit"` ou `"credit"`; sem ele (ou `null`), a saída sai do saldo, como sempre foi. **Só vale em despesa**, e `credit` exige uma conta com cartão (`400` em `fields[].path = "paymentMethod"`, "Esta conta não tem cartão de crédito."). Com `repeat`, a recorrência guarda o método e cada ocorrência gerada o herda (um parcelado no crédito vira uma parcela por fatura).
 - **Resposta `201`:** a transação criada. Aceita `Idempotency-Key`.
-- **Erros:** `400` (categoria inexistente ou de outra pessoa, valor zero/negativo, `repeat` em receita, categoria `transfer`) · `404` (conta que não é sua).
+- **Erros:** `400` (categoria inexistente ou de outra pessoa, valor zero/negativo, `repeat` em receita, categoria `transfer` ou `invoice`, `paymentMethod` em receita ou em conta sem cartão) · `404` (conta que não é sua).
 
 #### `GET /v1/transactions/:id`
 **Resposta `200`:** a transação. `404` se não for sua.
 
 #### `PATCH /v1/transactions/:id` — editar
-- **Corpo (todos opcionais):** `{ cardId, categoryId, name, description (string ou null), amount (positivo), type, occurredAt, applyToNext (boolean) }`
+- **Corpo (todos opcionais):** `{ cardId, categoryId, name, description (string ou null), amount (positivo), type, occurredAt, paymentMethod (string ou null), applyToNext (boolean) }`
 - **Resposta `200`:** a transação atualizada. O sinal do `amount` sempre acompanha o `type`, mesmo que só um deles mude.
 - **`applyToNext: true`** (só vale em transação que veio de uma recorrência): também altera a recorrência, então as **próximas** ocorrências saem com os novos conta, categoria, nome, descrição e valor. As já feitas não mudam.
 - **Mudar o tipo para `income`** em transação de recorrência **encerra** a recorrência (só despesa se repete). A mensagem do app para isso já existe (`RECURRENCE_ENDED_BY_TYPE`).
-- **Erros:** `409` `transfer_not_editable` (uma transferência não se edita: exclua e crie outra) · `404`.
+- **`paymentMethod`:** troca a forma de pagamento (ou `null`). Se uma despesa **vira receita**, o método vira `null` sozinho; pedir um método numa receita é `400`. Trocar o `cardId` de uma compra no crédito para uma conta sem cartão também é `400`. Com `applyToNext: true`, a recorrência de origem também muda.
+- **Erros:** `409` `transfer_not_editable` (uma transferência não se edita: exclua e crie outra) · `409` `invoice_payment_not_editable` (um **pagamento de fatura** não se edita: ofereça excluir) · `404`.
 
 #### `DELETE /v1/transactions/:id`
 **Resposta `204`.** Se for uma perna de transferência, **apaga as duas**. Excluir uma transação gerada por recorrência **não** a gera de novo.
@@ -337,10 +350,12 @@ Despesas que se repetem (mensais ou parceladas). **Criar** é feito por `POST /t
   "categoryId": "shopping", "categoryName": "Shopping", "categoryIcon": "shopping-bag", "categoryColor": "#9B59B6",
   "name": "Celular", "description": null,
   "amount": 150, "day": 20, "startMonth": "2026-08",
-  "firstInstallment": 1, "total": 10, "endMonth": null, "generatedUntil": "2026-10"
+  "firstInstallment": 1, "total": 10, "endMonth": null, "generatedUntil": "2026-10",
+  "paymentMethod": "credit"
 }
 ```
 - `amount` é a **magnitude positiva** de uma ocorrência. `total` é `null` numa mensal sem fim.
+- `paymentMethod` (`pix`, `debit`, `credit` ou `null`): cada ocorrência gerada o herda.
 - `generatedUntil` é o último mês já transformado em transação. As ocorrências **depois** dele são só previstas: o app as calcula (`occurrenceIn`, `plannedTransactions`) para a previsão e os lembretes.
 
 | Rota | Resposta | Observações |
@@ -397,7 +412,7 @@ Valem **a partir de um mês**, até a próxima mudança. O app calcula o vigente
 
 ### 3.11 Relatórios
 
-Sempre **sem transferências**. Geram antes as recorrências vencidas.
+Sempre **sem transferências** e **sem pagamentos de fatura** (categoria `invoice`: pagar a fatura não é gasto). **Incluem** as compras no crédito, **na data da compra** (é quando o gasto aconteceu). Geram antes as recorrências vencidas.
 
 | Rota | Resposta |
 | --- | --- |
@@ -406,17 +421,18 @@ Sempre **sem transferências**. Geram antes as recorrências vencidas.
 
 ### 3.12 Backup
 
-Mesmo formato do backup do app (`app: "sobro"`, `schemaVersion` 8).
+Mesmo formato do backup do app (`app: "sobro"`, `schemaVersion` 9).
 
 #### `GET /v1/backup`
 Devolve **tudo** da conta como JSON, no formato do backup do app. Serve para o usuário guardar uma cópia e para a LGPD. Traz `categories` (o catálogo e as **suas** categorias, ids `custom-...`), `cards`, `recurrences`, `transactions`, `profile`, `monthly_budgets`, `category_budgets`, `goals` e `goal_entries`.
 
 #### `PUT /v1/backup` — restaurar (**destrutivo**)
-- **Corpo:** o JSON de um backup (até 10 MB). Aceita arquivos de **qualquer versão de 1 a 8** do app.
+- **Corpo:** o JSON de um backup (até 10 MB). Aceita arquivos de **qualquer versão de 1 a 9** do app (os campos novos de cartão e forma de pagamento entram como `null`).
 - **Resposta `204`.** **Substitui tudo** da conta (contas, categorias próprias, transações, recorrências, orçamentos, caixinhas, perfil) numa única transação: se algo falhar, **nada muda**. Os **ids são refeitos**: depois do restore, busque tudo de novo.
 - **Peça confirmação** ao usuário antes, mostrando as contagens do arquivo. Datas antigas gravadas como instante UTC são normalizadas para o dia de calendário de São Paulo.
 - `theme`, `avatar_uri` e `monthly_budget` do perfil são aceitos e **descartados**.
 - **Categorias próprias** (ids `custom-*`) vêm no arquivo e são recriadas **com ids novos**, com transações, recorrências e limites remapeados. As do catálogo que vierem no arquivo são ignoradas. Um backup da v1 com categoria criada pelo usuário entra normalmente.
+- **Cartão de crédito (v9):** `cards` traz `credit_last_digits`, `credit_limit`, `closing_day` e `due_day`; `transactions` traz `payment_method` e `invoice_month`; `recurrences` traz `payment_method`. A API recusa forma de pagamento em receita ou nas categorias `transfer`/`invoice`, `credit` em conta sem `closing_day`, dias fora de 1 a 31, e pagamento de fatura sem `invoice_month` ou com valor positivo.
 - **Erros:** `400` `invalid_backup` com a `message` explicando (arquivo que não é do Sobrô, versão mais nova que a API entende, referência quebrada, valor zero, sinal errado, caixinha com saldo negativo, etc.) · `413` corpo grande demais.
 
 ---
@@ -440,6 +456,8 @@ Devolve **tudo** da conta como JSON, no formato do backup do app. Serve para o u
 | 409 | `transfer_not_editable` | Editar perna de transferência | Oferece excluir e criar outra |
 | 409 | `goal_insufficient` | Retirada acima do saldo / apagar depósito que deixa saldo negativo | Mostra a mensagem (traz o valor) |
 | 409 | `category_in_use` | Excluir categoria com transações ou recorrências | Mostra a mensagem |
+| 409 | `credit_in_use` | Tirar o cartão de uma conta que tem compras no crédito (ou recorrências no crédito ainda valendo) | Mostra a mensagem |
+| 409 | `invoice_payment_not_editable` | Editar um pagamento de fatura | Oferece excluir |
 | 413 | `payload_too_large` | Corpo grande demais | Avisa |
 | 426 | `upgrade_required` | Versão do app abaixo do mínimo | Tela "Atualize o app" |
 | 429 | `rate_limited` | Muitas tentativas | Pede para esperar |
