@@ -65,6 +65,7 @@ web: node dist/server.js
 | `TRUST_PROXY` | `true` (o limite de tentativas precisa ver o IP real) |
 | `RESEND_API_KEY`, `MAIL_FROM`, `RESET_PASSWORD_URL` | e-mail de redefinição de senha. Sem a chave, nenhum e-mail sai e o link não vai para o log |
 | `MIN_APP_VERSION` | opcional: versões do app abaixo dela recebem 426 |
+| `CORS_ORIGINS` | origens do site que chamam a API pelo navegador, separadas por vírgula (ex.: `https://app.exemplo.com`). Vazio = nenhuma; o app nativo não precisa. Só esquema, host e porta: `*` e caminhos são recusados |
 
 **Passo a passo pelo painel (deploy automático pelo GitHub):**
 
@@ -90,3 +91,4 @@ Com mais de um dyno web, a migração continua só na release phase; tire `runMi
 - Categorias: `GET /categories` traz o catálogo e as categorias do usuário (campo `custom`). Só as próprias se editam e se excluem; excluir uma em uso responde 409 `category_in_use`.
 - Cartão de crédito: uma conta tem cartão quando `credit` não é nulo. Uma saída `paymentMethod: "credit"` **não mexe no saldo** (vai para a fatura); pagar a fatura (`POST /cards/:id/invoice-payments`) é uma saída da conta na categoria oculta `invoice`, que mexe no saldo mas não é gasto do mês. A fatura não é guardada: o app a calcula.
 - `X-App-Version`: com `MIN_APP_VERSION` definido, versões menores recebem 426.
+- CORS: só as origens de `CORS_ORIGINS` (em dev, `http://localhost:8082`, no `.env.example`). Cabeçalhos aceitos: `Authorization`, `Content-Type`, `X-App-Version` e `Idempotency-Key`; o site pode ler `Idempotent-Replayed` e `Retry-After`. Sem cookies: a sessão vai no `Authorization`.
