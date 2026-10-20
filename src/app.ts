@@ -1,3 +1,4 @@
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { sql } from 'drizzle-orm';
@@ -48,6 +49,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     logger: deps.logger ?? false,
     trustProxy: config.TRUST_PROXY,
     bodyLimit: 1024 * 1024,
+  });
+
+  // CORS para o site (o app nativo não usa). Só as origens de CORS_ORIGINS; sem cookies, a sessão vai no Authorization.
+  // O preflight (OPTIONS) é respondido aqui, antes da checagem de versão e de sessão.
+  await app.register(cors, {
+    origin: config.CORS_ORIGINS,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'X-App-Version', 'Idempotency-Key'],
+    exposedHeaders: ['Idempotent-Replayed', 'Retry-After'],
+    maxAge: 600,
   });
 
   // O limite por IP roda depois de o corpo ser lido; o contador por e-mail fica nas rotas de autenticação.

@@ -5,6 +5,31 @@ const bool = z
   .default('false')
   .transform((v) => v === 'true' || v === '1');
 
+// Lista de origens separadas por vírgula. Cada uma é só esquema + host (+ porta), sem caminho: "*" não vale.
+const origins = z
+  .string()
+  .default('')
+  .transform((value, ctx) => {
+    const list: string[] = [];
+    for (const item of value.split(',')) {
+      const raw = item.trim().replace(/\/+$/, '');
+      if (!raw) continue;
+      let origin: string | null = null;
+      try {
+        const url = new URL(raw);
+        if ((url.protocol === 'http:' || url.protocol === 'https:') && url.origin === raw) origin = raw;
+      } catch {
+        // cai no erro abaixo
+      }
+      if (!origin) {
+        ctx.addIssue({ code: 'custom', message: `origem inválida: "${raw}" (use http://host:porta ou https://host)` });
+        return z.NEVER;
+      }
+      if (!list.includes(origin)) list.push(origin);
+    }
+    return list;
+  });
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -14,6 +39,8 @@ const schema = z.object({
   // Heroku Postgres exige TLS com certificado autoassinado: DB_SSL=true liga o TLS sem validar a cadeia.
   DB_SSL: bool,
   TRUST_PROXY: bool,
+  // Origens web autorizadas a chamar a API pelo navegador (CORS). Vazio = nenhuma. O app nativo não passa por CORS.
+  CORS_ORIGINS: origins,
   MIN_APP_VERSION: z.string().default(''),
   RESEND_API_KEY: z.string().default(''),
   MAIL_FROM: z.string().default('Sobrô? <nao-responda@exemplo.com>'),
