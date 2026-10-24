@@ -19,15 +19,48 @@ import {
 const money = (name: string) => numeric(name, { precision: 14, scale: 2, mode: 'number' });
 const createdAt = () => timestamp('created_at', { withTimezone: true, mode: 'date' }).notNull().defaultNow();
 
+// `kind = 'self'` é quem tem login (e-mail e senha). `kind = 'managed'` é um perfil gerenciado: dono dos dados de
+// outra pessoa, cuidados por quem tem login (ver profile_access), sem e-mail nem senha: ele nunca entra.
+// O índice único do e-mail continua valendo: o Postgres aceita vários NULL.
 export const users = pgTable(
   'users',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    email: text('email').notNull(),
-    passwordHash: text('password_hash').notNull(),
+    email: text('email'),
+    passwordHash: text('password_hash'),
+    kind: text('kind').notNull().default('self'),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex('users_email_unique').on(t.email)]
+  (t) => [
+    uniqueIndex('users_email_unique').on(t.email),
+    check('users_kind_valid', sql`${t.kind} IN ('self', 'managed')`),
+    check(
+      'users_login_by_kind',
+      sql`(${t.kind} = 'self' AND ${t.email} IS NOT NULL AND ${t.passwordHash} IS NOT NULL) OR (${t.kind} = 'managed' AND ${t.email} IS NULL AND ${t.passwordHash} IS NULL)`
+    ),
+  ]
+);
+
+// Quem pode gerenciar os dados de quem. Só o papel 'manager' (tudo) por enquanto; "só ver" exige aplicar somente
+// leitura em todas as rotas de escrita e fica para depois.
+export const profileAccess = pgTable(
+  'profile_access',
+  {
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    managerId: uuid('manager_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: text('role').notNull().default('manager'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.ownerId, t.managerId] }),
+    index('profile_access_manager_idx').on(t.managerId),
+    check('profile_access_role_valid', sql`${t.role} IN ('manager')`),
+    check('profile_access_not_self', sql`${t.ownerId} <> ${t.managerId}`),
+  ]
 );
 
 export const profile = pgTable('profile', {

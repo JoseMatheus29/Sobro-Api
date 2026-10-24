@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 
 import type { Executor } from '../db/client.js';
 import { profile, users } from '../db/schema.js';
@@ -10,6 +10,8 @@ export interface Me {
   name: string;
   currency: string;
   remindersEnabled: boolean;
+  /** Quantos perfis gerenciados esta conta tem (o app avisa que excluir a conta os apaga junto). */
+  managedProfiles: number;
 }
 
 export async function getMe(db: Executor, userId: string): Promise<Me> {
@@ -20,12 +22,14 @@ export async function getMe(db: Executor, userId: string): Promise<Me> {
       name: profile.name,
       currency: profile.currency,
       remindersEnabled: profile.remindersEnabled,
+      managedProfiles: sql<number>`(select count(*) from profile_access where profile_access.manager_id = users.id)`.mapWith(Number),
     })
     .from(users)
     .innerJoin(profile, eq(profile.userId, users.id))
     .where(eq(users.id, userId));
-  if (!row) throw notFound('Conta não encontrada.');
-  return row;
+  // Quem tem e-mail é quem tem login; um perfil gerenciado nunca é lido por aqui.
+  if (!row?.email) throw notFound('Conta não encontrada.');
+  return { ...row, email: row.email };
 }
 
 export async function updateProfile(

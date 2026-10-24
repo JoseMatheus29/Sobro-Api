@@ -353,7 +353,7 @@ describe('backup', () => {
       const v8 = files[3]![2]() as { data: { profile: { theme: string }[] } };
       expect(v8.data.profile[0]!.theme).toBe('dark');
       expect((await me.put('/backup', v8)).status).toBe(204);
-      expect((await me.get('/me')).body).toEqual({ id: me.userId, email: me.email, name: 'Zé', currency: 'BRL', remindersEnabled: true });
+      expect((await me.get('/me')).body).toEqual({ id: me.userId, email: me.email, name: 'Zé', currency: 'BRL', remindersEnabled: true, managedProfiles: 0 });
       // O backup exportado volta com o tema neutro, nunca o 'dark' do arquivo.
       expect((await me.get('/backup')).body.data.profile[0].theme).toBe('system');
     });

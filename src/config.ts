@@ -39,6 +39,8 @@ const schema = z.object({
   // Heroku Postgres exige TLS com certificado autoassinado: DB_SSL=true liga o TLS sem validar a cadeia.
   DB_SSL: bool,
   TRUST_PROXY: bool,
+  // Quantos perfis gerenciados (dados de outra pessoa, cuidados pela mesma conta) cada conta pode ter.
+  MAX_MANAGED_PROFILES: z.coerce.number().int().min(1).max(50).default(5),
   // Origens web autorizadas a chamar a API pelo navegador (CORS). Vazio = nenhuma. O app nativo não passa por CORS.
   CORS_ORIGINS: origins,
   MIN_APP_VERSION: z.string().default(''),

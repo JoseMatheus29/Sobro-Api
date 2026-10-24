@@ -75,6 +75,10 @@
       "value": ""
     },
     {
+      "key": "managedProfileId",
+      "value": ""
+    },
+    {
       "key": "creditSpendingMonth",
       "value": ""
     },
@@ -1894,6 +1898,278 @@
                 }
               }
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Perfis gerenciados",
+      "description": "Perfis gerenciados: cuidar das finanças de outra pessoa na mesma conta, trocando com o cabeçalho X-Profile-Id.",
+      "item": [
+        {
+          "name": "Criar perfil gerenciado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 201', () => pm.response.to.have.status(201));",
+                  "const p = pm.response.json();",
+                  "pm.collectionVariables.set('managedProfileId', p.id);",
+                  "pm.test('é um perfil gerenciado, sem login', () => { pm.expect(p.kind).to.eql('managed'); pm.expect(p.name).to.eql('Mãe'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "profiles"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mãe\",\n  \"currency\": \"BRL\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Cuida das finanças de outra pessoa na mesma conta. O perfil nasce com uma \"Conta Principal\" e não tem e-mail nem senha. Guarda o id em managedProfileId."
+          }
+        },
+        {
+          "name": "Listar perfis",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('o seu primeiro, depois os gerenciados', () => { const l = pm.response.json(); pm.expect(l[0].kind).to.eql('self'); pm.expect(l.some((p) => p.id === pm.collectionVariables.get('managedProfileId'))).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/profiles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "profiles"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Alterar perfil gerenciado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('nome alterado', () => pm.expect(pm.response.json().name).to.eql('Dona Maria'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/profiles/{{managedProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "profiles",
+                "{{managedProfileId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Dona Maria\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Contas do perfil (X-Profile-Id)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('só a conta dele', () => { const c = pm.response.json(); pm.expect(c.length).to.eql(1); pm.expect(c[0].name).to.eql('Conta Principal'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Profile-Id",
+                "value": "{{managedProfileId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "cards"
+              ]
+            },
+            "description": "Com X-Profile-Id, as rotas de dados valem para o perfil gerenciado. Sem o cabeçalho, são as suas."
+          }
+        },
+        {
+          "name": "Perfil que não é seu (403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "pm.test('profile_forbidden', () => pm.expect(pm.response.json().error.code).to.eql('profile_forbidden'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Profile-Id",
+                "value": "00000000-0000-4000-8000-000000000000"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/cards",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "cards"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Meu perfil ignora o cabeçalho",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('é a minha conta, com o total de perfis', () => { const me = pm.response.json(); pm.expect(me.email).to.be.a('string'); pm.expect(me.managedProfiles).to.be.at.least(1); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Profile-Id",
+                "value": "{{managedProfileId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Excluir perfil gerenciado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/profiles/{{managedProfileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "profiles",
+                "{{managedProfileId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "APAGA o perfil e todos os dados dele, de forma definitiva. Exige a SUA senha."
           }
         }
       ]

@@ -57,6 +57,13 @@
       "when": 1792850363173,
       "tag": "0007_mes_do_gasto",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792859262832,
+      "tag": "0008_perfis_gerenciados",
+      "breakpoints": true
     }
   ]
 }

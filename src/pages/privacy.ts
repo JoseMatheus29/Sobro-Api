@@ -20,10 +20,13 @@ export function privacyPage(): string {
 <tr><td>E-mail e senha (a senha é guardada apenas como um resumo criptográfico, nunca em texto)</td><td>Criar sua conta e entrar no aplicativo</td></tr>
 <tr><td>Nome e moeda (opcionais)</td><td>Personalizar o aplicativo</td></tr>
 <tr><td>Seus registros financeiros: contas, transações, categorias, transferências, despesas recorrentes, orçamentos e caixinhas</td><td>É o que o aplicativo faz: mostrar saldos, resumos e histórico em qualquer aparelho em que você entrar</td></tr>
+<tr><td>Se você usar perfis gerenciados: o nome, a moeda e os registros financeiros de outra pessoa que você cadastra para cuidar das finanças dela</td><td>Permitir que você alterne entre as suas contas e as dela dentro da mesma conta, sem que ela precise de login</td></tr>
 <tr><td>Dados técnicos de acesso (endereço IP, data e rota acessada)</td><td>Segurança, prevenção de abuso e correção de falhas</td></tr>
 </tbody>
 </table>
 <p>Não pedimos acesso a contas bancárias, cartões, contatos, localização, câmera nem microfone. Os valores que você digita são lançados por você, manualmente. Os lembretes de vencimento são notificações geradas <strong>no seu aparelho</strong>.</p>
+
+<p><strong>Perfis gerenciados.</strong> Você pode cadastrar, na sua conta, o perfil de outra pessoa (por exemplo, um familiar) para cuidar das finanças dela. Ao fazer isso, você declara que ela sabe e concorda. Esse perfil <strong>não tem e-mail nem senha</strong> e só pode ser acessado por você. A pessoa cuidada pode exercer os direitos da seção 8 por você ou escrevendo para o e-mail de contato abaixo. Cada perfil gerenciado tem os próprios dados, separados dos seus.</p>
 
 <h2>3. Como usamos os dados</h2>
 <p>Usamos os dados somente para fornecer o aplicativo: autenticar você, guardar e mostrar seus registros e, quando você pede, enviar o e-mail de redefinição de senha. <strong>Não vendemos seus dados, não exibimos anúncios e não usamos ferramentas de análise ou rastreamento de terceiros.</strong></p>
@@ -50,7 +53,7 @@ export function privacyPage(): string {
 <p>Nenhum sistema é totalmente imune a falhas. Em caso de incidente que possa causar dano relevante, avisaremos você e a autoridade competente, como a lei determina.</p>
 
 <h2>7. Por quanto tempo guardamos</h2>
-<p>Guardamos seus dados enquanto sua conta existir. Quando você exclui a conta, <strong>todos os seus dados são apagados do banco de dados de forma definitiva e imediata</strong>. Cópias de segurança do banco mantidas pelo provedor podem reter os dados por até 7 dias antes de serem descartadas. Os registros técnicos de acesso ficam por um período curto, apenas o necessário para segurança.</p>
+<p>Guardamos seus dados enquanto sua conta existir. Quando você exclui a conta, <strong>todos os seus dados são apagados do banco de dados de forma definitiva e imediata</strong>, inclusive os dos perfis gerenciados que você criou. Você também pode excluir um perfil gerenciado sozinho, e os dados dele são apagados da mesma forma. Cópias de segurança do banco mantidas pelo provedor podem reter os dados por até 7 dias antes de serem descartadas. Os registros técnicos de acesso ficam por um período curto, apenas o necessário para segurança.</p>
 
 <h2>8. Seus direitos</h2>
 <p>Você pode, a qualquer momento (LGPD, art. 18): confirmar que tratamos seus dados e acessá-los, corrigi-los, obter uma cópia, pedir a exclusão e revogar o consentimento.</p>

@@ -2,17 +2,18 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { sql } from 'drizzle-orm';
-import { ZodError } from 'zod';
+import { ZodError, z } from 'zod';
 
 import type { Config } from './config.js';
 import type { Ctx } from './context.js';
 import type { Db } from './db/client.js';
-import { AppError, unauthorized, zodFields } from './lib/errors.js';
+import { AppError, badRequest, unauthorized, zodFields } from './lib/errors.js';
 import type { Mailer } from './lib/mailer.js';
 import { createAccessTokenSigner } from './lib/tokens.js';
 import { compareVersions } from './lib/version.js';
 import { pageRoutes } from './routes/pages.js';
-import { registerProtectedRoutes, registerPublicRoutes } from './routes/index.js';
+import { registerAccountRoutes, registerDataRoutes, registerPublicRoutes } from './routes/index.js';
+import { canManage, profileForbidden } from './services/profiles.js';
 
 export interface AppDeps {
   db: Db;
@@ -23,6 +24,9 @@ export interface AppDeps {
 }
 
 const API_PREFIX = '/v1';
+
+// O id do perfil gerenciado no cabeçalho X-Profile-Id: um UUID, comparado em minúsculas.
+const PROFILE_ID = z.string().uuid().toLowerCase();
 
 // Violação (23503) da chave estrangeira `user_id -> users.id`. O Drizzle embrulha o erro do driver em `cause`.
 function isMissingUser(error: unknown): boolean {
@@ -56,7 +60,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: config.CORS_ORIGINS,
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'X-App-Version', 'Idempotency-Key'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'X-App-Version', 'Idempotency-Key', 'X-Profile-Id'],
     exposedHeaders: ['Idempotent-Replayed', 'Retry-After'],
     maxAge: 600,
   });
@@ -127,19 +131,44 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
       registerPublicRoutes(v1, ctx);
 
-      // Tudo daqui para baixo exige sessão. O usuário vem do token, nunca de um campo enviado.
+      // Tudo daqui para baixo exige sessão. O ator vem do token, nunca de um campo enviado.
       await v1.register(async (protectedScope) => {
+        protectedScope.decorateRequest('actorId', '');
         protectedScope.decorateRequest('userId', '');
         protectedScope.addHook('onRequest', async (req) => {
           const header = req.headers.authorization;
           if (!header?.startsWith('Bearer ')) throw unauthorized();
           try {
-            req.userId = await ctx.signer.verify(header.slice(7));
+            req.actorId = await ctx.signer.verify(header.slice(7));
           } catch {
             throw unauthorized();
           }
+          req.userId = req.actorId;
         });
-        registerProtectedRoutes(protectedScope, ctx);
+
+        // Conta (/me, /profiles): sempre do ator; o cabeçalho X-Profile-Id é ignorado.
+        registerAccountRoutes(protectedScope, ctx);
+
+        // Dados: de quem escolher o cabeçalho X-Profile-Id, se o ator o gerencia; senão, do próprio ator.
+        // O acesso é conferido no servidor em toda requisição: o token não leva o perfil.
+        await protectedScope.register(async (dataScope) => {
+          dataScope.addHook('onRequest', async (req) => {
+            const raw = req.headers['x-profile-id'];
+            if (raw === undefined) return;
+            const parsed = typeof raw === 'string' ? PROFILE_ID.safeParse(raw) : null;
+            if (!parsed?.success) {
+              throw badRequest('X-Profile-Id inválido.', 'validation_failed', [
+                { path: 'X-Profile-Id', message: 'Use o id (UUID) de um perfil seu.' },
+              ]);
+            }
+            const ownerId = parsed.data;
+            if (ownerId === req.actorId) return;
+            // Mesma resposta para um perfil de outra pessoa e para um que não existe: ninguém descobre ids.
+            if (!(await canManage(ctx.db, req.actorId, ownerId))) throw profileForbidden();
+            req.userId = ownerId;
+          });
+          registerDataRoutes(dataScope, ctx);
+        });
       });
     },
     { prefix: API_PREFIX }

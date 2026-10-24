@@ -14,6 +14,7 @@ export function deleteAccountPage(): string {
 <ul>
 <li>Sua conta (e-mail e senha) e o seu perfil.</li>
 <li>Todos os registros: contas, transações, transferências, categorias, despesas recorrentes, orçamentos e caixinhas.</li>
+<li>Os perfis gerenciados que você criou (as finanças de outras pessoas que você cuida) e todos os registros deles.</li>
 <li>Todas as sessões abertas em qualquer aparelho.</li>
 </ul>
 <p><strong>A exclusão é imediata e não pode ser desfeita.</strong> Se quiser guardar uma cópia, exporte um backup em Perfil, no aplicativo, antes de continuar. Cópias de segurança do banco mantidas pelo provedor podem reter os dados por até 7 dias antes de serem descartadas.</p>

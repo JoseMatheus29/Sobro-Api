@@ -65,6 +65,7 @@ web: node dist/server.js
 | `TRUST_PROXY` | `true` (o limite de tentativas precisa ver o IP real) |
 | `RESEND_API_KEY`, `MAIL_FROM`, `RESET_PASSWORD_URL` | e-mail de redefinição de senha. Sem a chave, nenhum e-mail sai e o link não vai para o log |
 | `MIN_APP_VERSION` | opcional: versões do app abaixo dela recebem 426 |
+| `MAX_MANAGED_PROFILES` | opcional: quantos perfis gerenciados cada conta pode ter (padrão 5) |
 | `CORS_ORIGINS` | origens do site que chamam a API pelo navegador, separadas por vírgula (ex.: `https://app.exemplo.com`). Vazio = nenhuma; o app nativo não precisa. Só esquema, host e porta: `*` e caminhos são recusados |
 
 **Passo a passo pelo painel (deploy automático pelo GitHub):**
@@ -89,6 +90,7 @@ Com mais de um dyno web, a migração continua só na release phase; tire `runMi
 - `Idempotency-Key` (UUID) nos `POST` que criam algo: repetir a mesma chave devolve a resposta original.
 - Caixinhas: o `amount` de `POST /goals/:id/entries` é **com sinal** (positivo guarda, negativo retira), ao contrário das transações. `saved` vem calculado (soma das movimentações) e retirar mais do que há responde 409 `goal_insufficient`.
 - Categorias: `GET /categories` traz o catálogo e as categorias do usuário (campo `custom`). Só as próprias se editam e se excluem; excluir uma em uso responde 409 `category_in_use`.
+- Perfis gerenciados: uma conta pode cuidar das finanças de outra pessoa (`POST /profiles`, até `MAX_MANAGED_PROFILES`). O app manda `X-Profile-Id: <id do perfil>` nas **rotas de dados** e a API troca o dono dos dados, se a conta gerenciar aquele perfil (`403 profile_forbidden` se não). `/auth/*`, `/me` e `/profiles` ignoram o cabeçalho e são sempre de quem fez a requisição (`actorId`; `userId` é o dono dos dados). Excluir a conta apaga também os perfis gerenciados dela.
 - Mês do gasto: toda transação traz `spendingMonth` (`AAAA-MM`). Compra no crédito conta no mês do **vencimento** da fatura; o resto, no mês da data. `GET /transactions?spendingMonth=` filtra por ele e `GET /reports/*?by=spending` agrupa por ele (`by=date`, o padrão, agrupa pela data). A regra é a função SQL `spending_month_of`.
 - Cartão de crédito: uma conta tem cartão quando `credit` não é nulo. Uma saída `paymentMethod: "credit"` **não mexe no saldo** (vai para a fatura); pagar a fatura (`POST /cards/:id/invoice-payments`) é uma saída da conta na categoria oculta `invoice`, que mexe no saldo mas não é gasto do mês. A fatura não é guardada: o app a calcula.
 - `X-App-Version`: com `MIN_APP_VERSION` definido, versões menores recebem 426.

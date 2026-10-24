@@ -38,19 +38,19 @@ describe('CORS na API', () => {
   });
   afterAll(() => t.close());
 
-  const preflight = (origin: string, url = '/v1/transactions', headers = 'authorization,content-type,x-app-version,idempotency-key') =>
+  const preflight = (origin: string, url = '/v1/transactions', headers = 'authorization,content-type,x-app-version,idempotency-key,x-profile-id') =>
     t.app.inject({
       method: 'OPTIONS',
       url,
       headers: { origin, 'access-control-request-method': 'POST', 'access-control-request-headers': headers },
     });
 
-  it('o preflight da origem liberada passa sem sessão e sem versão do app, com os 4 cabeçalhos', async () => {
+  it('o preflight da origem liberada passa sem sessão e sem versão do app, com os 5 cabeçalhos', async () => {
     const res = await preflight(WEB);
     expect(res.statusCode).toBe(204);
     expect(res.headers['access-control-allow-origin']).toBe(WEB);
     const allowed = String(res.headers['access-control-allow-headers']).toLowerCase().split(/\s*,\s*/);
-    expect(allowed.sort()).toEqual(['authorization', 'content-type', 'idempotency-key', 'x-app-version']);
+    expect(allowed.sort()).toEqual(['authorization', 'content-type', 'idempotency-key', 'x-app-version', 'x-profile-id']);
     const methods = String(res.headers['access-control-allow-methods']).split(/\s*,\s*/);
     expect(methods).toEqual(expect.arrayContaining(['GET', 'POST', 'PATCH', 'PUT', 'DELETE']));
     expect(res.headers['access-control-max-age']).toBe('600');

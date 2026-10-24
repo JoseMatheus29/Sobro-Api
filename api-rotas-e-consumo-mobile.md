@@ -24,7 +24,8 @@ Guia para quem escreve o cliente do app. Complementa o [api-requisitos-e-hospeda
 | **Dinheiro** | Números JSON com até 2 casas (`120.5`). Veja a [seção 2.6](#26-dinheiro-e-datas) para o sinal. |
 | **Datas** | `occurredAt` em ISO 8601 com `Z` (ex.: `2026-10-05T12:00:00.000Z`). Meses são texto `AAAA-MM`. |
 | **Ids** | Inteiros (`id: 12`). O id do usuário é um UUID. |
-| **Isolamento** | Todo dado é do usuário do token. Um id de outra pessoa responde **404**, igual a um id que não existe. |
+| **Isolamento** | Todo dado é do usuário do token (ou do **perfil gerenciado** escolhido em `X-Profile-Id`, veja a [seção 3.3](#33-perfil)). Um id de outra pessoa responde **404**, igual a um id que não existe. |
+| **Perfil ativo** | `X-Profile-Id: <uuid>` (opcional) nas rotas de **dados**: faz a requisição valer para um perfil gerenciado que a sua conta cuida. Sem ele, os dados são os seus. `/auth/*`, `/me` e `/profiles` o ignoram. |
 | **Paginação** | Só em `GET /transactions`: `{ items, nextCursor }`. |
 
 **Formato de erro (sempre o mesmo):**
@@ -203,7 +204,7 @@ Cria o usuário, o perfil e a conta padrão **"Conta Principal"**.
 ### 3.3 Perfil
 
 #### `GET /v1/me`
-**Resposta `200`:** `{ "id", "email", "name", "currency": "BRL", "remindersEnabled": true }`
+**Resposta `200`:** `{ "id", "email", "name", "currency": "BRL", "remindersEnabled": true, "managedProfiles": 0 }`. `managedProfiles` é quantos perfis gerenciados a conta tem (avise na hora de excluir a conta: eles vão junto). Sempre da pessoa logada, mesmo com `X-Profile-Id`.
 
 #### `PATCH /v1/me`
 - **Corpo (todos opcionais):** `{ "name"?: string (≤100), "currency"?: "BRL" (3 letras), "remindersEnabled"?: boolean }`
@@ -212,7 +213,29 @@ Cria o usuário, o perfil e a conta padrão **"Conta Principal"**.
 
 #### `DELETE /v1/me` — excluir a conta e todos os dados
 - **Corpo:** `{ "password": string }` · **Resposta `204`**.
-- **Erros:** `401` `invalid_credentials` (senha errada).
+- Apaga também os **perfis gerenciados** da conta que ficariam sem nenhum gerente (hoje, todos os que ela criou).
+- **Erros:** `401` `invalid_credentials` (senha errada) · `429` depois de muitas senhas erradas seguidas.
+
+### 3.3.1 Perfis gerenciados
+
+Uma conta pode cuidar das finanças de outra pessoa (por exemplo, a sua mãe) sem sair e entrar de novo. O perfil gerenciado **não tem login**: é só um dono de dados separado, que a sua conta acessa.
+
+| Rota | Corpo | Resposta | Observações |
+| --- | --- | --- | --- |
+| `GET /v1/profiles` | | `200 [ perfil ]` | O seu perfil primeiro (`kind: "self"`), depois os gerenciados (`kind: "managed"`, com `createdAt`), do mais antigo ao mais novo. |
+| `POST /v1/profiles` | `{ name (1 a 60), currency?: "BRL" }` | `201 perfil` | Nasce com uma conta ("Conta Principal"). `409` `profile_limit` ao passar do limite (5 por padrão). Aceita `Idempotency-Key`. |
+| `PATCH /v1/profiles/:id` | `{ name?, currency?, remindersEnabled? }` | `200 perfil` | Só de perfil gerenciado seu. O seu próprio perfil continua em `PATCH /me`. `404` para qualquer outro id. |
+| `DELETE /v1/profiles/:id` | `{ password }` (a **sua** senha) | `204` | Apaga o perfil e **todos** os dados dele, de forma definitiva. `401` `invalid_credentials` (senha errada) · `404` (não é um perfil seu) · `429` (muitas senhas erradas). |
+
+```json
+{ "id": "…", "kind": "managed", "name": "Mãe", "currency": "BRL", "remindersEnabled": true, "createdAt": "2026-10-25T12:00:00.000Z" }
+```
+
+**Trocar de perfil.** Mande `X-Profile-Id: <id do perfil>` em **todas as rotas de dados** enquanto ele estiver ativo (contas, transações, transferências, categorias, caixinhas, recorrências, orçamentos, relatórios e backup). Sem o cabeçalho, ou com o seu próprio id, vale o seu perfil. A API confere o acesso em **toda** requisição; se responder `403` `profile_forbidden`, volte para o seu perfil e avise. Um id que não é UUID responde `400`.
+
+- Cada perfil tem **os seus** dados: categorias próprias, orçamentos, caixinhas, lembretes e backup (`GET/PUT /backup` com o cabeçalho exporta e restaura **só** aquele perfil). O catálogo de categorias é de todos.
+- Esvazie o cache de dados (ou inclua o perfil na chave) ao trocar, e mostre uma **faixa visível** com o perfil ativo.
+- `Idempotency-Key` vale por perfil: a mesma chave em dois perfis cria duas coisas.
 
 ### 3.4 Categorias
 
@@ -453,12 +476,14 @@ Devolve **tudo** da conta como JSON, no formato do backup do app. Serve para o u
 | 401 | `invalid_credentials` | E-mail/senha (ou senha da exclusão) errados | Mostra "E-mail ou senha incorretos" |
 | 401 | `invalid_refresh_token` | Token de renovação inválido | Volta ao login |
 | 401 | `invalid_reset_token` | Link de redefinição inválido/expirado/usado | Pede um novo link |
+| 403 | `profile_forbidden` | `X-Profile-Id` de um perfil que a conta não gerencia, ou que não existe (mais) | Volta para o próprio perfil e avisa |
 | 404 | `not_found` | Não existe ou é de outra pessoa | Atualiza a tela |
 | 409 | `email_taken` | E-mail já cadastrado | Sugere entrar |
 | 409 | `last_card` | Excluir a última conta | Mostra a mensagem |
 | 409 | `transfer_not_editable` | Editar perna de transferência | Oferece excluir e criar outra |
 | 409 | `goal_insufficient` | Retirada acima do saldo / apagar depósito que deixa saldo negativo | Mostra a mensagem (traz o valor) |
 | 409 | `category_in_use` | Excluir categoria com transações ou recorrências | Mostra a mensagem |
+| 409 | `profile_limit` | Criar um perfil gerenciado além do limite | Mostra a mensagem |
 | 409 | `credit_in_use` | Tirar o cartão de uma conta que tem compras no crédito (ou recorrências no crédito ainda valendo) | Mostra a mensagem |
 | 409 | `invoice_payment_not_editable` | Editar um pagamento de fatura | Oferece excluir |
 | 413 | `payload_too_large` | Corpo grande demais | Avisa |

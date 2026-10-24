@@ -14,7 +14,12 @@ export interface Ctx {
 
 declare module 'fastify' {
   interface FastifyRequest {
-    /** Id do usuário tirado do token de acesso, nunca de um campo enviado pelo app. */
+    /** Quem fez a requisição: o usuário do token de acesso (sempre quem tem login), nunca um campo enviado pelo app. */
+    actorId: string;
+    /**
+     * De quem são os dados desta requisição. É o mesmo que `actorId`, exceto nas rotas de dados com o cabeçalho
+     * `X-Profile-Id` de um perfil gerenciado que o ator pode gerenciar. Os serviços só conhecem este.
+     */
     userId: string;
   }
 }

@@ -48,7 +48,8 @@ A exclusão **dentro do app** (Perfil > Excluir conta, `DELETE /v1/me`) precisa 
 ## 3. O que está por trás de cada resposta (para você conferir)
 
 - **Senha:** só o hash argon2id fica no banco; a senha nunca é registrada em log.
-- **Exclusão:** `DELETE /v1/me` apaga o usuário e tudo dele de verdade (chaves estrangeiras em cascata: contas, transações, categorias, recorrências, orçamentos, caixinhas, sessões).
+- **Exclusão:** `DELETE /v1/me` apaga o usuário e tudo dele de verdade (chaves estrangeiras em cascata: contas, transações, categorias, recorrências, orçamentos, caixinhas, sessões), e também os **perfis gerenciados** que ficariam sem nenhum gerente. `DELETE /v1/profiles/:id` apaga um perfil gerenciado e os dados dele, com a senha de quem gerencia.
+- **Perfis gerenciados (dados de terceiros):** a pessoa pode cadastrar o perfil de outra (um familiar, por exemplo) na própria conta. Esse perfil não tem e-mail nem senha, os dados ficam separados dos da conta e só quem gerencia acessa. Na descrição do app e na política de privacidade isso está dito, e quem cadastra declara que a pessoa sabe e concorda. Continua valendo "não coletamos dados de terceiros por conta própria": os dados são digitados por quem usa o app.
 - **Logs:** não carregam valores nem descrições de transações; tokens e termos de busca são ocultados.
 - **Sem anúncios nem rastreadores** na API.
 - **Dados fora do Brasil:** servidores nos EUA (Heroku). A política de privacidade diz isso.

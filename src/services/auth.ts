@@ -22,7 +22,7 @@ export interface AuthContext {
   mailer: Mailer;
 }
 
-const DEFAULT_CARD = { name: 'Conta Principal', number: '0001', color: '#3161B2', lightColor: '#4A74BB' };
+export const DEFAULT_CARD = { name: 'Conta Principal', number: '0001', color: '#3161B2', lightColor: '#4A74BB' };
 
 const normalizeEmail = (email: string) => email.trim().toLowerCase();
 
@@ -85,7 +85,8 @@ export async function login(
 
   // Sem a conta, ainda gasta o tempo de uma verificação: o tempo não revela se o e-mail existe.
   const valid = await verifyPassword(user?.passwordHash ?? (await dummyHash()), input.password);
-  if (!user || !valid) throw unauthorized('E-mail ou senha incorretos.', 'invalid_credentials');
+  // (Só quem tem login tem e-mail e senha: um perfil gerenciado nunca é achado por aqui.)
+  if (!user || !user.email || !valid) throw unauthorized('E-mail ou senha incorretos.', 'invalid_credentials');
 
   return { session: await sessionFor(ctx.db, ctx, user.id, crypto.randomUUID()), user: { id: user.id, email: user.email } };
 }
@@ -138,7 +139,7 @@ export async function logout(ctx: AuthContext, token: string): Promise<void> {
 // Sempre termina sem erro, exista a conta ou não (a rota responde 204 nos dois casos).
 export async function requestPasswordReset(ctx: AuthContext, emailInput: string): Promise<void> {
   const [user] = await ctx.db.select({ id: users.id, email: users.email }).from(users).where(eq(users.email, normalizeEmail(emailInput)));
-  if (!user) return;
+  if (!user?.email) return;
 
   const token = newOpaqueToken();
   await ctx.db.insert(passwordResetTokens).values({
@@ -181,12 +182,25 @@ export async function resetPassword(ctx: AuthContext, token: string, newPassword
 
 // ---- conta ----
 
-// Apaga o usuário e tudo dele de verdade (as chaves estrangeiras em cascata levam o resto).
+// Apaga o usuário e tudo dele de verdade (as chaves estrangeiras em cascata levam o resto), inclusive os perfis
+// gerenciados que ficariam sem nenhum gerente: dado financeiro de terceiro não pode sobrar sem ninguém com acesso.
 export async function deleteAccount(ctx: AuthContext, userId: string, password: string): Promise<void> {
   const [user] = await ctx.db.select({ passwordHash: users.passwordHash }).from(users).where(eq(users.id, userId));
-  if (!user || !(await verifyPassword(user.passwordHash, password))) {
+  if (!user?.passwordHash || !(await verifyPassword(user.passwordHash, password))) {
     throw unauthorized('Senha incorreta.', 'invalid_credentials');
   }
-  await ctx.db.delete(users).where(eq(users.id, userId));
+  await ctx.db.transaction(async (tx) => {
+    // Trava o usuário: uma criação de perfil dele em andamento espera, e a seguinte já não o encontra.
+    await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('no key update');
+    // Antes de apagar o usuário: depois disso as linhas de profile_access já teriam sumido por cascata.
+    await tx.delete(users).where(
+      and(
+        eq(users.kind, 'managed'),
+        sql`exists (select 1 from profile_access where profile_access.owner_id = users.id and profile_access.manager_id = ${userId})`,
+        sql`not exists (select 1 from profile_access where profile_access.owner_id = users.id and profile_access.manager_id <> ${userId})`
+      )
+    );
+    await tx.delete(users).where(eq(users.id, userId));
+  });
 }
 
