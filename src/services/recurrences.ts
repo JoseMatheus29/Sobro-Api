@@ -5,6 +5,7 @@ import { cards, categories, recurrences, transactions } from '../db/schema.js';
 import { notFound } from '../lib/errors.js';
 import type { PaymentMethod } from '../shared/payment.js';
 import { calendarNoon, monthKey } from '../shared/month.js';
+import { spendingMonthSql } from './spending.js';
 import { dueOccurrences, type RecurrenceRule } from '../shared/recurrence.js';
 
 export interface RecurrenceRecord extends RecurrenceRule {
@@ -154,6 +155,11 @@ export async function materializeDue(db: Db, userId: string, timeZone: string, i
       const r = await getRecurrence(tx, userId, id);
       const due = dueOccurrences(r, today);
       if (due.length === 0) continue;
+      // Compra no crédito: trava a conta (FOR SHARE) para uma troca dos dias do cartão esperar estas linhas, que
+      // gravam o mês do gasto com os dias vigentes.
+      if (r.paymentMethod === 'credit') {
+        await tx.select({ id: cards.id }).from(cards).where(eq(cards.id, r.cardId)).for('share');
+      }
       await tx.insert(transactions).values(
         due.map((occurrence) => ({
           userId,
@@ -167,6 +173,7 @@ export async function materializeDue(db: Db, userId: string, timeZone: string, i
           recurrenceId: r.id,
           installment: r.total !== null ? occurrence.installment : null,
           paymentMethod: r.paymentMethod,
+          spendingMonth: spendingMonthSql(new Date(occurrence.date), r.paymentMethod, r.cardId),
         }))
       );
       await tx

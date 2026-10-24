@@ -11,6 +11,14 @@ export const NO_CREDIT_MESSAGE = 'Esta conta não tem cartão de crédito.';
 
 const MONTH_ABBREVIATIONS = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 
+// O mês do vencimento da fatura que fecha em `closingMonth` ('AAAA-MM'): o próprio mês se o dia do vencimento vem
+// depois do de fechamento; senão, o seguinte. Compara só os dois dias (sem olhar o mês), como o app.
+export function invoiceDueMonth(closingMonth: string, closingDay: number, dueDay: number): string {
+  if (dueDay > closingDay) return closingMonth;
+  const [year, month] = closingMonth.split('-').map(Number) as [number, number];
+  return month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, '0')}`;
+}
+
 // "2026-11" → "nov/2026", para o nome do pagamento de fatura.
 export function monthLabel(month: string): string {
   const [year, m] = month.split('-') as [string, string];

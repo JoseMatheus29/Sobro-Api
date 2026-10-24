@@ -53,7 +53,9 @@ const transactionPatch = z
   .partial();
 
 const listQuery = z.object({
+  // month filtra pela data; spendingMonth, pelo mês em que o gasto conta (o do vencimento, no crédito).
   month: month.optional(),
+  spendingMonth: month.optional(),
   cardId: z.coerce.number().int().positive().optional(),
   categoryId: z.string().max(40).optional(),
   type: z.enum(['income', 'expense']).optional(),

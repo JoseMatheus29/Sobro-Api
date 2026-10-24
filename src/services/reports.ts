@@ -12,9 +12,15 @@ export interface MonthTotals {
   expense: number;
 }
 
-// Entradas e saídas de cada mês com lançamentos, do mais novo ao mais antigo. Transferências não contam.
-export async function monthlyTotals(db: Executor, userId: string): Promise<MonthTotals[]> {
-  const month = sql<string>`to_char(${transactions.occurredAt} at time zone 'UTC', 'YYYY-MM')`;
+/** Como agrupar por mês: pela data da transação ou pelo mês em que o gasto conta (o do vencimento, no crédito). */
+export type ReportBy = 'date' | 'spending';
+
+// Entradas e saídas de cada mês com lançamentos, do mais novo ao mais antigo. Transferências e pagamentos de fatura não contam.
+export async function monthlyTotals(db: Executor, userId: string, by: ReportBy = 'date'): Promise<MonthTotals[]> {
+  const month =
+    by === 'spending'
+      ? sql<string>`${transactions.spendingMonth}`
+      : sql<string>`to_char(${transactions.occurredAt} at time zone 'UTC', 'YYYY-MM')`;
   const rows = await db
     .select({
       month,
@@ -37,9 +43,13 @@ export interface CategoryTotal {
   total: number;
 }
 
-// Total de despesas por categoria no mês, da maior para a menor. Transferências não contam.
-export async function categoryTotals(db: Executor, userId: string, month: string): Promise<CategoryTotal[]> {
+// Total de despesas por categoria no mês, da maior para a menor. Transferências e pagamentos de fatura não contam.
+export async function categoryTotals(db: Executor, userId: string, month: string, by: ReportBy = 'date'): Promise<CategoryTotal[]> {
   const { start, end } = monthRange(month);
+  const inMonth =
+    by === 'spending'
+      ? eq(transactions.spendingMonth, month)
+      : and(gte(transactions.occurredAt, start), lt(transactions.occurredAt, end));
   const total = sql<number>`sum(abs(${transactions.amount}))`.mapWith(Number);
   return db
     .select({
@@ -58,8 +68,7 @@ export async function categoryTotals(db: Executor, userId: string, month: string
         eq(transactions.type, 'expense'),
         isNull(transactions.transferId),
         ne(transactions.categoryId, INVOICE_CATEGORY_ID),
-        gte(transactions.occurredAt, start),
-        lt(transactions.occurredAt, end)
+        inMonth
       )
     )
     .groupBy(transactions.categoryId, categories.name, categories.icon, categories.color, categories.bg)

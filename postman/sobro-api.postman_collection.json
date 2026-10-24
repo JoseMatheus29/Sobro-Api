@@ -75,6 +75,10 @@
       "value": ""
     },
     {
+      "key": "creditSpendingMonth",
+      "value": ""
+    },
+    {
       "key": "creditTxId",
       "value": ""
     },
@@ -1482,6 +1486,8 @@
                   "const t = pm.response.json();",
                   "pm.collectionVariables.set('creditTxId', t.id);",
                   "pm.test('é no crédito e a despesa vem negativa', () => { pm.expect(t.paymentMethod).to.eql('credit'); pm.expect(t.amount).to.eql(-300); });",
+                  "pm.collectionVariables.set('creditSpendingMonth', t.spendingMonth);",
+                  "pm.test('spendingMonth é o mês do vencimento da fatura (AAAA-MM)', () => pm.expect(t.spendingMonth).to.match(/^\\d{4}-(0[1-9]|1[0-2])$/));",
                   "pm.sendRequest({ url: pm.variables.replaceIn('{{baseUrl}}/v1/cards/{{creditCardId}}'), method: 'GET', header: { Authorization: 'Bearer ' + pm.collectionVariables.get('accessToken') } }, (err, res) => {",
                   "  pm.test('o saldo continua 1000', () => pm.expect(res.json().balance).to.eql(1000));",
                   "});"
@@ -1553,6 +1559,42 @@
               ]
             },
             "description": "Base para o app calcular a fatura (utils/invoice.ts)."
+          }
+        },
+        {
+          "name": "Listar pelo mês do gasto",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('traz a compra no crédito e só do mês do gasto', () => { const i = pm.response.json().items; pm.expect(i.map((x) => x.id)).to.include(Number(pm.collectionVariables.get('creditTxId'))); pm.expect(i.every((x) => x.spendingMonth === pm.collectionVariables.get('creditSpendingMonth'))).to.eql(true); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transactions?spendingMonth={{creditSpendingMonth}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transactions"
+              ],
+              "query": [
+                {
+                  "key": "spendingMonth",
+                  "value": "{{creditSpendingMonth}}"
+                }
+              ]
+            },
+            "description": "month filtra pela data da compra; spendingMonth, pelo mês em que o gasto conta (o do vencimento da fatura, nas compras no crédito). Pix, débito e receitas contam no mês da data."
           }
         },
         {
@@ -2630,6 +2672,117 @@
                 {
                   "key": "month",
                   "value": "{{month}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Totais por mês, pelo mês do gasto",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('lista de meses AAAA-MM', () => pm.response.json().forEach((m) => pm.expect(m.month).to.match(/^\\d{4}-\\d{2}$/)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/reports/monthly-totals?by=spending",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "reports",
+                "monthly-totals"
+              ],
+              "query": [
+                {
+                  "key": "by",
+                  "value": "spending"
+                }
+              ]
+            },
+            "description": "by=spending agrupa pelo mês em que o gasto conta (crédito = mês do vencimento da fatura). O padrão, by=date, agrupa pela data."
+          }
+        },
+        {
+          "name": "Totais por categoria, pelo mês do gasto",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/reports/category-totals?month={{creditSpendingMonth}}&by=spending",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "reports",
+                "category-totals"
+              ],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "{{creditSpendingMonth}}"
+                },
+                {
+                  "key": "by",
+                  "value": "spending"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "by desconhecido (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/reports/monthly-totals?by=vencimento",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "reports",
+                "monthly-totals"
+              ],
+              "query": [
+                {
+                  "key": "by",
+                  "value": "vencimento"
                 }
               ]
             }

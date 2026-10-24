@@ -253,7 +253,7 @@ No app a "conta" é um lugar onde está o dinheiro (banco, cartão, carteira). O
 | `DELETE /v1/cards/:id` | — | `204` | Apaga as transações e recorrências da conta **e a outra perna** das transferências em que ela participou. `409` `last_card` se for a última conta. |
 | `POST /v1/cards/:id/invoice-payments` | `{ month, amount, occurredAt }` | `201 transação` | Paga (parte de) uma fatura com o saldo **desta** conta. Ver abaixo. Aceita `Idempotency-Key`. |
 
-**Pagar a fatura.** `month` é a **chave da fatura** (`AAAA-MM`, o mês em que ela fecha); `amount` é positivo; `occurredAt` é o dia do pagamento, ao meio-dia UTC (como as transações). A resposta é a transação criada: despesa na conta, `categoryId: "invoice"`, `name: "Fatura Nubank nov/2026"`, `amount` negativo, `paymentMethod: null`, `invoiceMonth: "2026-11"`. Mexe no saldo, mas **não é gasto do mês**. O servidor **não** limita o valor ao total da fatura (o app limita na tela); pagar a mais fica registrado. Para desfazer, `DELETE /v1/transactions/:id` (a fatura volta a ficar em aberto). Erros: `404` conta que não é sua · `400` `validation_failed` (conta sem cartão, `month` inválido, valor zero ou negativo).
+**Pagar a fatura.** `month` é a **chave da fatura** (`AAAA-MM`, o mês em que ela fecha); `amount` é positivo; `occurredAt` é o dia do pagamento, ao meio-dia UTC (como as transações). A resposta é a transação criada: despesa na conta, `categoryId: "invoice"`, `name: "Fatura Nubank dez/2026"`, `amount` negativo, `paymentMethod: null`, `invoiceMonth: "2026-11"`. O **nome** usa o mês do **vencimento** (a fatura que fecha em 25/11 e vence em 05/12 é "dez/2026"), enquanto `invoiceMonth` continua sendo a chave do **fechamento**. Mexe no saldo, mas **não é gasto do mês**. O servidor **não** limita o valor ao total da fatura (o app limita na tela); pagar a mais fica registrado. Para desfazer, `DELETE /v1/transactions/:id` (a fatura volta a ficar em aberto). Erros: `404` conta que não é sua · `400` `validation_failed` (conta sem cartão, `month` inválido, valor zero ou negativo).
 
 **A fatura não é guardada: o app a calcula** (`utils/invoice.ts`) a partir das compras no crédito (`GET /transactions?paymentMethod=credit`) e dos pagamentos (`invoiceMonth`). Com `C` o dia de fechamento e `D` o de vencimento: uma compra do dia `d` entra na fatura do mês de `d` se `dia(d) <= C`, senão na do mês seguinte (dias 29 a 31 num mês mais curto valem o último dia); o vencimento é o dia `D` do mês da fatura se `D > C`, ou do mês seguinte se `D <= C`. Exemplo (`C = 3`, `D = 10`): compra em 07/10 entra na fatura `2026-11` (04/10 a 03/11), que vence em 10/11.
 
@@ -269,21 +269,24 @@ No app a "conta" é um lugar onde está o dinheiro (banco, cartão, carteira). O
   "occurredAt": "2026-10-05T12:00:00.000Z", "createdAt": "2026-10-05T18:02:11.000Z",
   "recurrence": { "id": 7, "installment": 2, "total": 10 },
   "transferId": null,
-  "paymentMethod": "credit", "invoiceMonth": null
+  "paymentMethod": "credit", "invoiceMonth": null,
+  "spendingMonth": "2026-12"
 }
 ```
 - `amount` **com sinal** (despesa negativa, receita positiva).
 - `recurrence` é `null` numa transação comum. Numa recorrência mensal sem fim, `installment` e `total` são `null`.
 - `transferId` só vem preenchido nas duas pernas de uma transferência.
 - `paymentMethod`: `"pix"`, `"debit"`, `"credit"` ou `null` (as antigas, receitas, transferências e pagamentos de fatura: saem do saldo). Uma saída no **crédito não mexe no saldo** da conta.
-- `invoiceMonth` (`AAAA-MM`) só vem nos **pagamentos de fatura** (categoria `invoice`); `null` nas demais.
+- `invoiceMonth` (`AAAA-MM`) só vem nos **pagamentos de fatura** (categoria `invoice`); `null` nas demais. É a **chave** da fatura: o mês em que ela **fecha**.
+- `spendingMonth` (`AAAA-MM`, sempre presente) é o **mês em que o gasto conta**. Numa despesa no **crédito** é o mês do **vencimento** da fatura que recebe a compra; em todo o resto (Pix, débito, sem forma de pagamento, receitas, transferências, pagamento de fatura) é o mês da `occurredAt`. A API o calcula e o refaz sozinha ao editar a transação ou mudar os dias do cartão: o app não envia esse campo. Exemplo (`C = 25`, `D = 5`): compra em 27/10 → fatura que fecha em 25/11 e vence em 05/12 → `spendingMonth: "2026-12"`.
 
 #### `GET /v1/transactions` — listar
 Do mais novo ao mais antigo (`occurredAt` e `id` decrescentes). Gera antes as recorrências vencidas.
 
 | Parâmetro | Significado |
 | --- | --- |
-| `month=2026-10` | Só transações desse mês. **Sem `month`, busca em qualquer mês.** |
+| `month=2026-10` | Só transações **da data** desse mês. **Sem `month`, busca em qualquer mês.** |
+| `spendingMonth=2026-12` | Só as que **contam** nesse mês (compras no crédito: o mês do vencimento da fatura). Combinado com `month`, valem os dois. Inválido responde `400`. |
 | `cardId=3` | Só dessa conta |
 | `categoryId=food` | Só dessa categoria |
 | `paymentMethod=credit` | Só as pagas dessa forma (`pix`, `debit` ou `credit`) |
@@ -416,8 +419,8 @@ Sempre **sem transferências** e **sem pagamentos de fatura** (categoria `invoic
 
 | Rota | Resposta |
 | --- | --- |
-| `GET /v1/reports/monthly-totals` | `200 [ { "month": "2026-10", "income": 3500, "expense": 1200 } ]` — só meses com lançamentos, do mais novo ao mais antigo. Valores **positivos**. Base do histórico. |
-| `GET /v1/reports/category-totals?month=2026-10` | `200 [ { "categoryId", "categoryName", "icon", "color", "bg", "total" } ]` — despesas por categoria no mês, da maior para a menor (`total` positivo). `month` é **obrigatório** (`400` sem ele). |
+| `GET /v1/reports/monthly-totals` | `200 [ { "month": "2026-10", "income": 3500, "expense": 1200 } ]` — só meses com lançamentos, do mais novo ao mais antigo. Valores **positivos**. Base do histórico. `?by=date` (padrão) agrupa pela data; `?by=spending` pelo **mês em que o gasto conta** (no crédito, o do vencimento da fatura). Outro valor de `by` responde `400`. Pagamentos de fatura e transferências ficam de fora nos dois modos. |
+| `GET /v1/reports/category-totals?month=2026-10` | `200 [ { "categoryId", "categoryName", "icon", "color", "bg", "total" } ]` — despesas por categoria no mês, da maior para a menor (`total` positivo). `month` é **obrigatório** (`400` sem ele). Aceita `by=date` (padrão) ou `by=spending`, como acima. |
 
 ### 3.12 Backup
 

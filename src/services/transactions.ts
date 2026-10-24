@@ -10,6 +10,7 @@ import { INVOICE_CATEGORY_ID, NO_CREDIT_MESSAGE, type PaymentMethod } from '../s
 import { escapeLike, searchWords } from '../shared/search.js';
 import { assertCategory } from './categories.js';
 import { createRecurrence, endRecurrence, updateRecurrence } from './recurrences.js';
+import { spendingMonthSql } from './spending.js';
 
 export const TRANSFER_CATEGORY_ID = 'transfer';
 
@@ -36,6 +37,8 @@ export interface TransactionRecord {
   paymentMethod: PaymentMethod | null;
   /** 'AAAA-MM' da fatura que este lançamento paga; só nos pagamentos de fatura. */
   invoiceMonth: string | null;
+  /** 'AAAA-MM' em que o gasto conta: o mês do vencimento da fatura numa compra no crédito; senão, o mês da data. */
+  spendingMonth: string;
 }
 
 const txColumns = {
@@ -58,6 +61,7 @@ const txColumns = {
   transferId: transactions.transferId,
   paymentMethod: transactions.paymentMethod,
   invoiceMonth: transactions.invoiceMonth,
+  spendingMonth: transactions.spendingMonth,
 };
 
 function selectTransactions(db: Executor) {
@@ -93,6 +97,7 @@ function mapRow(row: TxRow): TransactionRecord {
     transferId: row.transferId,
     paymentMethod: row.paymentMethod as PaymentMethod | null,
     invoiceMonth: row.invoiceMonth,
+    spendingMonth: row.spendingMonth,
   };
 }
 
@@ -105,7 +110,10 @@ export async function getTransaction(db: Executor, userId: string, id: number): 
 // ---- listagem ----
 
 export interface ListFilters {
+  /** Pela data da transação. */
   month?: string;
+  /** Pelo mês em que o gasto conta (o do vencimento da fatura, nas compras no crédito). */
+  spendingMonth?: string;
   cardId?: number;
   categoryId?: string;
   type?: TransactionType;
@@ -139,6 +147,7 @@ export async function listTransactions(
     const { start, end } = monthRange(f.month);
     conditions.push(gte(transactions.occurredAt, start), lt(transactions.occurredAt, end));
   }
+  if (f.spendingMonth) conditions.push(eq(transactions.spendingMonth, f.spendingMonth));
   if (f.cardId !== undefined) conditions.push(eq(transactions.cardId, f.cardId));
   if (f.categoryId !== undefined) conditions.push(eq(transactions.categoryId, f.categoryId));
   if (f.type !== undefined) conditions.push(eq(transactions.type, f.type));
@@ -295,6 +304,7 @@ async function insertTransaction(
       recurrenceId,
       installment,
       paymentMethod,
+      spendingMonth: spendingMonthSql(occurredAt, paymentMethod, input.cardId),
     })
     .returning({ id: transactions.id });
   return getTransaction(tx, userId, row!.id);
@@ -341,6 +351,7 @@ async function applyUpdate(
       cardId: transactions.cardId,
       categoryId: transactions.categoryId,
       paymentMethod: transactions.paymentMethod,
+      occurredAt: transactions.occurredAt,
     })
     .from(transactions)
     .where(and(eq(transactions.userId, userId), eq(transactions.id, id)))
@@ -373,7 +384,7 @@ async function applyUpdate(
     const card = await assertOwnCard(tx, userId, patch.cardId ?? current.cardId);
     assertPaymentMethod(paymentMethod, type, card.hasCredit);
   }
-  const set: Partial<typeof transactions.$inferInsert> = {};
+  const set: Partial<Omit<typeof transactions.$inferInsert, 'spendingMonth'>> & { spendingMonth?: SQL<string> } = {};
   if (patch.cardId !== undefined) set.cardId = patch.cardId;
   if (patch.categoryId !== undefined) set.categoryId = patch.categoryId;
   if (patch.name !== undefined) set.name = patch.name;
@@ -381,6 +392,11 @@ async function applyUpdate(
   if (patch.occurredAt !== undefined) set.occurredAt = normalizeDate(patch.occurredAt, timeZone);
   if (patch.type !== undefined) set.type = patch.type;
   if (paymentMethod !== current.paymentMethod) set.paymentMethod = paymentMethod;
+  // O mês do gasto acompanha a data, a forma de pagamento e a conta (quando o crédito está em jogo a conta já foi
+  // travada acima, então os dias do cartão não mudam até o fim desta transação).
+  if (set.occurredAt !== undefined || set.paymentMethod !== undefined || set.cardId !== undefined) {
+    set.spendingMonth = spendingMonthSql(set.occurredAt ?? current.occurredAt, paymentMethod, set.cardId ?? current.cardId);
+  }
   // O sinal sempre acompanha o tipo, mesmo quando só um dos dois muda.
   if (patch.amount !== undefined || patch.type !== undefined) {
     const magnitude = patch.amount !== undefined ? round2(Math.abs(patch.amount)) : Math.abs(current.amount);
@@ -481,6 +497,7 @@ async function insertTransfer(tx: Tx, userId: string, input: TransferInput, time
       amount: -amount,
       type: 'expense',
       occurredAt,
+      spendingMonth: spendingMonthSql(occurredAt, null, input.fromCardId),
     })
     .returning({ id: transactions.id });
   // O id da primeira perna dá nome à transferência.
@@ -498,6 +515,7 @@ async function insertTransfer(tx: Tx, userId: string, input: TransferInput, time
       type: 'income',
       occurredAt,
       transferId,
+      spendingMonth: spendingMonthSql(occurredAt, null, input.toCardId),
     })
     .returning({ id: transactions.id });
 

@@ -26,6 +26,7 @@ import {
 } from '../shared/backup.js';
 import { calendarNoon } from '../shared/month.js';
 import { catalogCategoryIds, newCustomCategoryId } from './categories.js';
+import { spendingMonthSql } from './spending.js';
 
 // Tudo da pessoa no formato do backup do app (serve também para a LGPD). Os ids são os do servidor;
 // o `transfer_id` aponta para a primeira perna, como no app.
@@ -241,20 +242,24 @@ export async function restoreBackup(tx: Tx, userId: string, backup: ValidBackup,
         batch.map((row) => {
           const magnitude = round2(Math.abs(Number(row.amount)));
           const createdAt = Date.parse(String(row.created_at));
+          const cardId = cardIds.get(row.card_id as number)!;
+          const occurredAt = calendarNoon(new Date(String(row.occurred_at)), timeZone);
           return {
             userId,
-            cardId: cardIds.get(row.card_id as number)!,
+            cardId,
             categoryId: categoryOf(row.category_id),
             name: String(row.name),
             description: (row.description as string | null) ?? null,
             amount: row.type === 'expense' ? -magnitude : magnitude,
             type: String(row.type),
-            occurredAt: calendarNoon(new Date(String(row.occurred_at)), timeZone),
+            occurredAt,
             createdAt: Number.isNaN(createdAt) ? new Date() : new Date(createdAt),
             recurrenceId: row.recurrence_id === null ? null : recurrenceIds.get(row.recurrence_id as number)!,
             installment: (row.installment as number | null) ?? null,
             paymentMethod: (row.payment_method as string | null) ?? null,
             invoiceMonth: (row.invoice_month as string | null) ?? null,
+            // Derivado, não vai no arquivo: calculado aqui com os dias do cartão que acabou de ser gravado.
+            spendingMonth: spendingMonthSql(occurredAt, (row.payment_method as string | null) ?? null, cardId),
           };
         })
       )

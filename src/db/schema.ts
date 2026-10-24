@@ -155,6 +155,10 @@ export const transactions = pgTable(
     paymentMethod: text('payment_method'),
     // 'AAAA-MM' da fatura que este lançamento paga; só nos pagamentos de fatura (categoria `invoice`).
     invoiceMonth: text('invoice_month'),
+    // O mês em que o gasto conta ('AAAA-MM'): despesa no crédito = mês do vencimento da fatura que a recebe; todo o
+    // resto = mês da data. Derivado (função spending_month_of): toda gravação que muda data, forma de pagamento ou
+    // conta o refaz, e mudar os dias do cartão refaz o das compras no crédito dele.
+    spendingMonth: text('spending_month').notNull(),
   },
   (t) => [
     index('transactions_user_occurred_idx').on(t.userId, t.occurredAt),
@@ -162,6 +166,8 @@ export const transactions = pgTable(
     index('transactions_user_recurrence_idx').on(t.userId, t.recurrenceId),
     index('transactions_user_transfer_idx').on(t.userId, t.transferId),
     index('transactions_user_card_method_idx').on(t.userId, t.cardId, t.paymentMethod),
+    index('transactions_user_spending_month_idx').on(t.userId, t.spendingMonth),
+    check('transactions_spending_month_format', sql`${t.spendingMonth} ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'`),
     check('transactions_payment_method_valid', sql`${t.paymentMethod} IN ('pix', 'debit', 'credit')`),
     check('transactions_type_valid', sql`${t.type} IN ('income', 'expense')`),
     check(

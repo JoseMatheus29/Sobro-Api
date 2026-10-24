@@ -174,6 +174,16 @@ export function updateCard(db: Db, userId: string, id: number, patch: CardPatch)
     if (Object.keys(set).length > 0) {
       await tx.update(cards).set(set).where(and(eq(cards.userId, userId), eq(cards.id, id)));
     }
+    // Mudar os dias do cartão vale para todas as faturas, também as passadas: o mês do gasto das compras no
+    // crédito desta conta é refeito na mesma transação. (Tirar o cartão não chega aqui com compras no crédito.)
+    if (credit) {
+      await tx
+        .update(transactions)
+        .set({
+          spendingMonth: sql<string>`spending_month_of(${transactions.occurredAt}, ${transactions.paymentMethod}, ${credit.closingDay}::integer, ${credit.dueDay}::integer)`,
+        })
+        .where(and(eq(transactions.userId, userId), eq(transactions.cardId, id), eq(transactions.paymentMethod, 'credit')));
+    }
     return getCard(tx, userId, id);
   });
 }

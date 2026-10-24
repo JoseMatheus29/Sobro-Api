@@ -5,12 +5,13 @@ import { cards, transactions } from '../db/schema.js';
 import { badRequest, notFound } from '../lib/errors.js';
 import { runIdempotent, type IdempotencyKey, type Idempotent } from '../lib/idempotency.js';
 import { round2 } from '../lib/money.js';
-import { INVOICE_CATEGORY_ID, NO_CREDIT_MESSAGE, monthLabel } from '../shared/payment.js';
+import { INVOICE_CATEGORY_ID, NO_CREDIT_MESSAGE, invoiceDueMonth, monthLabel } from '../shared/payment.js';
 import { calendarNoon } from '../shared/month.js';
+import { spendingMonthSql } from './spending.js';
 import { getTransaction, type TransactionRecord } from './transactions.js';
 
 export interface InvoicePaymentInput {
-  /** A chave da fatura: 'AAAA-MM' do mês em que ela fecha. */
+  /** A chave da fatura: 'AAAA-MM' do mês em que ela fecha (o app a mostra pelo mês do vencimento). */
   month: string;
   /** Positivo. O servidor não limita ao total da fatura (o app limita na tela). */
   amount: number;
@@ -32,28 +33,32 @@ export function payInvoice(
   return runIdempotent(db, userId, 'POST /cards/invoice-payments', key, async (tx) => {
     // FOR SHARE: tirar o cartão da conta ao mesmo tempo espera este pagamento terminar.
     const [card] = await tx
-      .select({ name: cards.name, closingDay: cards.closingDay })
+      .select({ name: cards.name, closingDay: cards.closingDay, dueDay: cards.dueDay })
       .from(cards)
       .where(and(eq(cards.userId, userId), eq(cards.id, cardId)))
       .for('share');
     if (!card) throw notFound('Conta não encontrada.');
-    if (card.closingDay === null) {
+    if (card.closingDay === null || card.dueDay === null) {
       throw badRequest(NO_CREDIT_MESSAGE, 'validation_failed', [{ path: 'cardId', message: NO_CREDIT_MESSAGE }]);
     }
 
+    // O nome usa o mês do vencimento, que é como o banco (e o app) chama a fatura.
+    const dueMonth = invoiceDueMonth(input.month, card.closingDay, card.dueDay);
+    const occurredAt = calendarNoon(input.occurredAt, timeZone);
     const [row] = await tx
       .insert(transactions)
       .values({
         userId,
         cardId,
         categoryId: INVOICE_CATEGORY_ID,
-        name: `Fatura ${card.name} ${monthLabel(input.month)}`,
+        name: `Fatura ${card.name} ${monthLabel(dueMonth)}`,
         description: null,
         amount: -round2(Math.abs(input.amount)),
         type: 'expense',
-        occurredAt: calendarNoon(input.occurredAt, timeZone),
+        occurredAt,
         paymentMethod: null,
         invoiceMonth: input.month,
+        spendingMonth: spendingMonthSql(occurredAt, null, cardId),
       })
       .returning({ id: transactions.id });
     return getTransaction(tx, userId, row!.id);
