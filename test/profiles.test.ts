@@ -289,6 +289,30 @@ describe('X-Profile-Id nas rotas de dados', () => {
     expect((await me.get('/transactions?limit=50')).body.items).toEqual([]);
   });
 
+  it('excluir uma recorrência com o cabeçalho apaga a do perfil gerenciado e não toca na do ator', async () => {
+    const me = await signup(t.app);
+    const mom = await newProfile(me);
+    await populate(me);
+    await populate(me, mom);
+    const recurrenceOf = async (profile?: string) =>
+      ((await call(me, 'GET', '/recurrences', profile ? { profile } : {})).body as { id: number; name: string }[]).find((r) => r.name === 'Plano')!.id;
+    const mine = await recurrenceOf();
+    const hers = await recurrenceOf(mom);
+    const countPlans = async (profile?: string) =>
+      ((await call(me, 'GET', '/transactions?limit=50', profile ? { profile } : {})).body.items as { name: string }[]).filter((x) => x.name === 'Plano').length;
+    const mineBefore = await countPlans();
+    expect(mineBefore).toBeGreaterThan(0);
+
+    // O id dela não existe do ponto de vista do ator, e o do ator não existe no perfil dela.
+    expect((await call(me, 'DELETE', `/recurrences/${hers}`)).status).toBe(404);
+    expect((await call(me, 'DELETE', `/recurrences/${mine}`, { profile: mom })).status).toBe(404);
+
+    expect((await call(me, 'DELETE', `/recurrences/${hers}`, { profile: mom })).status).toBe(204);
+    expect(await countPlans(mom)).toBe(0);
+    expect(await countPlans()).toBe(mineBefore);
+    expect((await call(me, 'GET', '/recurrences')).body.some((r: { id: number }) => r.id === mine)).toBe(true);
+  });
+
   it('o backup exporta o perfil escolhido, e restaurar nele não toca nos dados do ator', async () => {
     const me = await signup(t.app);
     const mom = await newProfile(me);

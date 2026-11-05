@@ -51,6 +51,7 @@ export function goalsRoutes(app: FastifyInstance, c: Controller<typeof createGoa
 export function recurrencesRoutes(app: FastifyInstance, c: Controller<typeof createRecurrencesController>) {
   app.get('/recurrences', c.list);
   app.get('/recurrences/:id', c.get);
+  app.delete('/recurrences/:id', c.remove);
   app.post('/recurrences/:id/end', c.end);
   app.post('/recurrences/materialize', c.generateDue);
 }

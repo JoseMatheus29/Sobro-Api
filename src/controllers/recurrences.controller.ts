@@ -1,6 +1,6 @@
 import type { Ctx } from '../context.js';
 import { idParam } from '../lib/schemas.js';
-import { endRecurrence, getRecurrence, listRecurrences } from '../services/recurrences.js';
+import { deleteRecurrence, endRecurrence, getRecurrence, listRecurrences } from '../services/recurrences.js';
 import { materialize, type Handler } from './support.js';
 
 export function createRecurrencesController(ctx: Ctx) {
@@ -18,8 +18,14 @@ export function createRecurrencesController(ctx: Ctx) {
     return getRecurrence(ctx.db, req.userId, id);
   };
 
+  // Exclui a recorrência e tudo o que ela lançou, de todos os meses.
+  const remove: Handler = async (req, reply) => {
+    await deleteRecurrence(ctx.db, req.userId, idParam.parse(req.params).id);
+    return reply.code(204).send();
+  };
+
   // Alternativa explícita à geração dentro dos GET: o app pode chamar ao abrir.
   const generateDue: Handler = async (req) => ({ created: await materialize(ctx, req.userId) });
 
-  return { list, get, end, generateDue };
+  return { list, get, end, generateDue, remove };
 }

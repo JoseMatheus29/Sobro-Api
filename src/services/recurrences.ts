@@ -118,6 +118,24 @@ export async function endRecurrence(tx: Executor, userId: string, id: number): P
   if (ended.length === 0) throw notFound('Recorrência não encontrada.');
 }
 
+// Exclui a recorrência e TODAS as transações que ela fez, de todos os meses (a primeira, lançada à mão, e as
+// geradas). Apagar só a linha da recorrência deixaria as transações soltas (a chave estrangeira as desliga dela:
+// ON DELETE SET NULL), por isso elas saem primeiro, e tudo na mesma transação do banco. Travar a linha
+// (FOR UPDATE) faz uma geração simultânea (materializeDue, que trava as mesmas linhas) esperar em vez de criar
+// parcelas no meio da exclusão, e uma exclusão que chega primeiro faz a geração pular a recorrência.
+export function deleteRecurrence(db: Db, userId: string, id: number): Promise<void> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ id: recurrences.id })
+      .from(recurrences)
+      .where(and(eq(recurrences.userId, userId), eq(recurrences.id, id)))
+      .for('update');
+    if (!row) throw notFound('Recorrência não encontrada.');
+    await tx.delete(transactions).where(and(eq(transactions.userId, userId), eq(transactions.recurrenceId, id)));
+    await tx.delete(recurrences).where(and(eq(recurrences.userId, userId), eq(recurrences.id, id)));
+  });
+}
+
 // Último mês do plano ('YYYY-MM'), em SQL: início + (parcelas que faltam depois da primeira).
 const planLastMonth = sql`to_char((${recurrences.startMonth} || '-01')::date + make_interval(months => ${recurrences.total} - ${recurrences.firstInstallment}), 'YYYY-MM')`;
 

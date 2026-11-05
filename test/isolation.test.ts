@@ -54,6 +54,7 @@ describe('um usuário não alcança os dados de outro', () => {
   it('recorrências', async () => {
     expect((await bob.get(`/recurrences/${aliceRecurrence}`)).status).toBe(404);
     expect((await bob.post(`/recurrences/${aliceRecurrence}/end`)).status).toBe(404);
+    expect((await bob.del(`/recurrences/${aliceRecurrence}`)).status).toBe(404);
     expect((await alice.get(`/recurrences/${aliceRecurrence}`)).body.endMonth).toBeNull();
   });
 

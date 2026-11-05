@@ -367,7 +367,7 @@ Do mais novo ao mais antigo (`occurredAt` e `id` decrescentes). Gera antes as re
 
 ### 3.8 Recorrências
 
-Despesas que se repetem (mensais ou parceladas). **Criar** é feito por `POST /transactions` com `repeat`; aqui só se lê e se encerra.
+Despesas que se repetem (mensais ou parceladas). **Criar** é feito por `POST /transactions` com `repeat`; aqui se lê, se encerra e se exclui.
 
 **Objeto recorrência:**
 ```json
@@ -389,6 +389,7 @@ Despesas que se repetem (mensais ou parceladas). **Criar** é feito por `POST /t
 | `GET /v1/recurrences` | `200 [recorrência]` | Gera as vencidas antes. O app usa para previsão e lembretes. |
 | `GET /v1/recurrences/:id` | `200 recorrência` | `404` se não for sua. |
 | `POST /v1/recurrences/:id/end` | `200 recorrência` | Encerra: nada depois do que já foi gerado é criado. O que foi gerado fica. |
+| `DELETE /v1/recurrences/:id` | `204` | Apaga a recorrência **e todas as transações dela, de todos os meses** (a primeira, lançada à mão, e as geradas), de uma vez; vale também para uma encerrada ou na última parcela. `404` `not_found` se não for sua (igual a um id que não existe, e um `DELETE` repetido também), `400` se o id não for inteiro. Respeita `X-Profile-Id`. Os saldos mudam: releia as contas e as transações depois. |
 | `POST /v1/recurrences/materialize` | `200 { "created": 2 }` | Força a geração das vencidas. Opcional (as leituras já fazem). |
 
 ### 3.9 Caixinhas (`goals`)

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { makeApp, noon, signup, type Client, type TestApp } from './helpers.js';
@@ -317,6 +318,113 @@ describe('recorrências', () => {
     const dates = (await me.get('/transactions?limit=50')).body.items.map((x: { occurredAt: string }) => x.occurredAt.slice(0, 10)).sort();
     // 10/10/2026: agosto (31), setembro (30); outubro (31) ainda não venceu.
     expect(dates).toEqual(['2026-07-31', '2026-08-31', '2026-09-30']);
+  });
+
+  it('excluir a recorrência apaga todas as transações dela, de todos os meses, e nenhuma outra', async () => {
+    const me = await signup(t.app);
+    const card = await firstCard(me);
+    const startingBalance = (await me.get(`/cards/${card.id}`)).body.balance as number;
+    await me.post('/transactions', expense(card.id, { name: 'Café', amount: 8, occurredAt: noon('2026-10-03') }));
+    const balanceWithoutPlan = (await me.get(`/cards/${card.id}`)).body.balance as number;
+    expect(balanceWithoutPlan).toBe(startingBalance - 8);
+
+    // Criada em 05/07, com "hoje" em 10/10: jul (à mão), ago, set e out.
+    await me.post('/transactions', expense(card.id, { name: 'Academia', amount: 100, occurredAt: noon('2026-07-05'), repeat: { mode: 'monthly' } }));
+    const gym = (await me.get('/transactions?limit=50')).body.items.filter((x: { name: string }) => x.name === 'Academia') as { id: number; occurredAt: string }[];
+    expect(gym).toHaveLength(4);
+    expect((await me.get(`/cards/${card.id}`)).body.balance).toBe(balanceWithoutPlan - 400);
+
+    // Excluir uma ocorrência à mão não tira a recorrência do ar; só a rota nova faz isso.
+    const august = gym.find((x) => x.occurredAt.startsWith('2026-08'))!;
+    expect((await me.del(`/transactions/${august.id}`)).status).toBe(204);
+    const [recurrence] = (await me.get('/recurrences')).body as { id: number }[];
+
+    const res = await me.del(`/recurrences/${recurrence!.id}`);
+    expect(res.status).toBe(204);
+    expect(res.body).toBeUndefined();
+
+    const left = (await me.get('/transactions?limit=50')).body.items as { name: string; recurrence: unknown }[];
+    expect(left.map((x) => x.name)).toEqual(['Café']);
+    expect(left[0]!.recurrence).toBeNull();
+    expect((await me.get('/recurrences')).body).toEqual([]);
+    expect((await me.post('/recurrences/materialize')).body).toEqual({ created: 0 });
+    // O saldo volta ao que era sem a recorrência.
+    expect((await me.get(`/cards/${card.id}`)).body.balance).toBe(balanceWithoutPlan);
+  });
+
+  it('um plano de parcelas também some por inteiro, mesmo encerrado ou na última parcela', async () => {
+    const me = await signup(t.app);
+    const card = await firstCard(me);
+    await me.post('/transactions', expense(card.id, { name: 'Celular', amount: 150, occurredAt: noon('2026-08-20'), repeat: { mode: 'installments', total: 4, current: 2 } }));
+    await me.post('/transactions', expense(card.id, { name: 'Sofá', amount: 90, occurredAt: noon('2026-09-02'), repeat: { mode: 'installments', total: 2, current: 1 } }));
+    const recurrences = (await me.get('/recurrences')).body as { id: number; name: string }[];
+    expect(recurrences).toHaveLength(2);
+
+    // O sofá já está na última parcela (jul, set... a de 02/10 venceu); encerrar à mão não impede excluir.
+    const sofa = recurrences.find((r) => r.name === 'Sofá')!;
+    expect((await me.post(`/recurrences/${sofa.id}/end`)).status).toBe(200);
+    for (const r of recurrences) expect((await me.del(`/recurrences/${r.id}`)).status, r.name).toBe(204);
+
+    expect((await me.get('/transactions?limit=50')).body.items).toEqual([]);
+    expect((await me.get('/recurrences')).body).toEqual([]);
+    expect((await me.get(`/cards/${card.id}`)).body.balance).toBe(0);
+  });
+
+  it('excluir de novo responde 404, e um id que não é inteiro responde 400', async () => {
+    const me = await signup(t.app);
+    const card = await firstCard(me);
+    await me.post('/transactions', expense(card.id, { name: 'Streaming', occurredAt: noon('2026-10-02'), repeat: { mode: 'monthly' } }));
+    const id = ((await me.get('/recurrences')).body as { id: number }[])[0]!.id;
+
+    expect((await me.del(`/recurrences/${id}`)).status).toBe(204);
+    const again = await me.del(`/recurrences/${id}`);
+    expect(again.status).toBe(404);
+    expect(again.body.error.code).toBe('not_found');
+    expect((await me.del('/recurrences/999999999')).status).toBe(404);
+    for (const bad of ['abc', '1.5', '-1', '0']) expect((await me.del(`/recurrences/${bad}`)).status, bad).toBe(400);
+  });
+
+  it('excluir uma recorrência não toca nas outras nem nas transações avulsas', async () => {
+    const me = await signup(t.app);
+    const card = await firstCard(me);
+    await me.post('/transactions', expense(card.id, { name: 'Mantida', occurredAt: noon('2026-09-02'), repeat: { mode: 'monthly' } }));
+    await me.post('/transactions', expense(card.id, { name: 'Removida', occurredAt: noon('2026-09-03'), repeat: { mode: 'monthly' } }));
+    await me.post('/transactions', expense(card.id, { name: 'Avulsa', occurredAt: noon('2026-09-04') }));
+    const removed = ((await me.get('/recurrences')).body as { id: number; name: string }[]).find((r) => r.name === 'Removida')!;
+
+    expect((await me.del(`/recurrences/${removed.id}`)).status).toBe(204);
+    const names = ((await me.get('/transactions?limit=50')).body.items as { name: string }[]).map((x) => x.name);
+    expect(names.filter((n) => n === 'Mantida')).toHaveLength(2);
+    expect(names.filter((n) => n === 'Avulsa')).toHaveLength(1);
+    expect(names).not.toContain('Removida');
+    expect(((await me.get('/recurrences')).body as { name: string }[]).map((r) => r.name)).toEqual(['Mantida']);
+  });
+
+  it('uma geração em andamento termina antes: nenhuma parcela fica solta depois da exclusão', async () => {
+    const me = await signup(t.app);
+    const card = await firstCard(me);
+    await me.post('/transactions', expense(card.id, { name: 'Plano', occurredAt: noon('2026-09-02'), repeat: { mode: 'monthly' } }));
+    const id = ((await me.get('/recurrences')).body as { id: number }[])[0]!.id;
+
+    // Como a geração: trava a recorrência e lança uma parcela nova, ainda sem commit.
+    let finished = false;
+    let request: Promise<{ status: number }> = Promise.resolve({ status: 0 });
+    await t.db.transaction(async (tx) => {
+      await tx.execute(sql`select 1 from recurrences where id = ${id} for update`);
+      await tx.execute(sql`insert into transactions (user_id, card_id, category_id, name, amount, type, occurred_at, recurrence_id, spending_month)
+        values (${me.userId}::uuid, ${card.id}, 'food', 'Parcela fantasma', -50, 'expense', '2026-11-02T12:00:00Z', ${id}, '2026-11')`);
+      request = me.del(`/recurrences/${id}`).then((res) => {
+        finished = true;
+        return res;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      expect(finished).toBe(false);
+    });
+    expect((await request).status).toBe(204);
+
+    const names = ((await me.get('/transactions?limit=50')).body.items as { name: string }[]).map((x) => x.name);
+    expect(names).not.toContain('Parcela fantasma');
+    expect(names).not.toContain('Plano');
   });
 
   it('duas leituras simultâneas não geram a mesma parcela duas vezes', async () => {

@@ -109,6 +109,7 @@ Com o app online, a API é um REST comum: um recurso por tabela, mais as operaç
 | POST /goals/:id/entries, DELETE /goals/:id/entries/:entryId | Guardar, retirar (valor negativo) e apagar uma movimentação | recusa (409 `goal_insufficient`) retirar mais do que há e apagar um depósito que deixaria a caixinha negativa; a linha da caixinha é travada na checagem e na gravação; o POST aceita `Idempotency-Key` |
 | GET /recurrences | Listar recorrências | o app usa para previsão e lembretes |
 | POST /recurrences/:id/end | Encerrar uma recorrência | o que já foi gerado fica (`endRecurrence`) |
+| DELETE /recurrences/:id | Excluir uma recorrência e tudo o que ela lançou | apaga as transações com `recurrence_id = :id` (de todos os meses) e depois a recorrência, na mesma transação, com a linha travada (`FOR UPDATE`) para uma geração simultânea esperar; `204`; `404` se não for do dono dos dados. A ordem importa: `transactions.recurrence_id` é `ON DELETE SET NULL`, então apagar só a recorrência deixaria as transações soltas |
 | GET /budgets/monthly, PUT /budgets/monthly/:month | Orçamento por mês | `amount` nulo = sem orçamento |
 | GET /budgets/categories, PUT /budgets/categories/:categoryId/:month | Limite por categoria | mesma lógica |
 | GET /reports/monthly-totals | Entradas e saídas de cada mês, para o histórico | sem transferências (`transfer_id IS NULL`); `by=date` (padrão) agrupa pela data, `by=spending` pelo mês em que o gasto conta |
